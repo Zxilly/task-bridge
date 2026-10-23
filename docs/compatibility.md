@@ -11,10 +11,12 @@
 | WebSocket | `github.com/coder/websocket v1.8.15` | 版本锁定，自定义 SDK transport |
 | SQLite | `modernc.org/sqlite v1.61.0` | 版本锁定，纯 Go 驱动 |
 | B 控制协议 | `1` | 项目内部 JSON 协议，非 MCP |
-| Claude Code | 需按实际运行版本记录 | 原计划的本机静态检查不能替代当前 Go 实现的真实连接 |
+| Claude Code | 本机静态检查为 `2.1.283` | 已检查 `--version`、`--help` 和 `auth login --help`；未调用模型，不代表账号登录或真实任务已验证 |
 | Caddy 模板 | `2.11.7-alpine` | 明确镜像 tag，未在目标主机部署验收 |
 
-## 本次交付检查
+## 已有基础实现检查
+
+本节记录新增逐任务 A 控制器之前已完成的 server/B 验证。新的控制器、launcher 与 relay 检查范围单列在下节，不能由原 A 协议模拟客户端的结果替代。
 
 | 检查 | 结果 | 范围 |
 | --- | --- | --- |
@@ -36,7 +38,7 @@
 | Docker build/run | 未执行 | 本机 Docker Desktop Linux engine 未运行 |
 | 真实 Claude channel | 未执行 | 预检为 `loggedIn=false, authMethod=none, apiProvider=firstParty`，没有 Anthropic 环境凭据 |
 
-自动化总测覆盖 broker、client、executor、MCP transport、HTTP 生命周期、storage 和 integration 包。A 仍是官方 SDK 协议测试客户端，具有真实 WS 连接并读取 channel 通知；它不代表真实 Claude 模型或账号。按用户确认，真实 Claude channel、目标生产部署/TLS 和实际拟用宿主的验收延期；P0/P6 对应外部验收仍未通过。
+上述自动化总测覆盖 broker、client、executor、MCP transport、HTTP 生命周期、storage 和 integration 包。原 A 测试端是官方 SDK 协议客户端，具有真实 WS 连接并读取 channel 通知；它不代表真实 Claude 模型或账号。按用户确认，真实 Claude、目标生产部署/TLS 和实际拟用宿主的验收留待后续。
 
 小规模模拟中，五个实际 Bash 命令各执行一次；同 key 重试返回同一 command，跨工作区的 A/B 查询被拒绝，同一任务的并发命令被拒绝，后继任务在前一任务 complete 后才分派。下面记录 Go 测试进程的离散采样，数值受 GC 和先前测试影响，不能当作 broker 独占内存、峰值或容量上限：
 
@@ -55,8 +57,8 @@
 
 ## 尚未通过的外部验收
 
-- 真实 Claude Code → 远程 WS MCP → channel 唤起 → B Bash → Claude complete 的完整闭环。
-- 目标 Claude 账号的 channel feature/组织准入、交互确认与实际权限行为。
+- 现有用户登录 → A 控制器 → 每任务新 Claude Code `-p` 进程 → 本机 HTTP MCP → B Bash → Claude complete 的真实模型闭环，以及连续两个任务的会话隔离。
+- 可选手工 channel 模式的真实推送、目标账号准入、交互确认与权限行为；默认 worker 不要求 headless 子进程加载 development channel。
 - 独立 Linux 服务器上的原生运行；WSL Ubuntu 的完整 Go 测试与 race 已通过。
 - 目标服务器 Docker/Compose、TLS/WSS、Caddy reload、停机与旧备份恢复演练。
 - 实际拟用的第三方 B MCP 宿主中的完整工作流；官方 Go SDK host 已通过真实 CLI stdio 测试。
@@ -64,9 +66,43 @@
 
 远程 Linux/Windows CI、Linux race 与容器构建的运行记录见 [GitHub Actions](https://github.com/Zxilly/task-bridge/actions)；本页的平台测试记录来自本地 Windows 与 WSL。交叉编译不等于目标系统运行测试。外部验收结果完成后，应追加版本、命令、时间和观察证据。
 
-## 真实 Claude channel smoke
+## 逐任务 A 控制器验收
 
-远程 WebSocket MCP 和 channel 的行为依据 [Claude MCP 文档](https://code.claude.com/docs/en/mcp#option-4-add-a-remote-websocket-server)、[Channels reference](https://code.claude.com/docs/en/channels-reference)及 [CLI reference](https://code.claude.com/docs/en/cli-reference#cli-flags)。预览期功能或组织策略可能使工具连接成功但 channel 被拒绝。
+新增的 `task-bridge-agent` 将 A 的连接生命周期与 Claude 会话生命周期分开。控制器用官方 Go MCP SDK 接收 broker 通知，每个任务创建不同的 session UUID 和临时 cwd，通过只服务该任务的本机 HTTP MCP 转发工具。任务结果仍由 `task_complete` 提交；不把 CLI 的普通文本或成功退出当作任务完成。
+
+| 定向检查 | 结果 | 范围 |
+| --- | --- | --- |
+| A CLI doctor | 通过 | 使用可被路径检查发现但不能执行的假 Claude 文件；不启动进程、不创建 state_dir、不联网、不输出设备 token |
+| 控制器与真实 broker | 通过 | 两个任务使用不同 session/cwd/token；前一个子会话退出后才启动后继；未完成即退出会断开上游；assignment 变化会停止旧会话 |
+| Claude 进程启动器 | Windows / Linux 通过 | 真实 helper 子进程验证启动参数、stdin、环境、目录、非零退出诊断与取消后的进程树清理；不调用模型 |
+| 新控制器全量回归 | Windows / Linux 通过 | 全部包的普通测试、vet 和 CGO_ENABLED=0 构建；Linux 全部包 race 通过 |
+| HTTP MCP relay | 通过 | 官方 SDK 客户端验证任务范围、原始 JSON、鉴权/Origin、响应大小、取消和关闭；定向 race 通过 |
+| 示例与入口指南 | 通过 | 8 份 examples JSON、两指南的 6 个 JSON 示例均可解析；A/B smoke payload 一致 |
+| GoReleaser 新 agent 配置 | 通过 | GoReleaser 2.18.3 `check`，平台归档包含 server、client、agent 三个 build ID |
+| 真实 Claude 模型运行 | 未执行 | 仅检查本机 CLI 帮助；没有调用推理来代替用户完成登录或验收 |
+
+本机静态检查确认 Claude Code 2.1.283 提供 `--print`、`--session-id`、`--no-session-persistence`、`--tools`、`--allowedTools`、`--strict-mcp-config`、`--mcp-config` 和 `--permission-prompts`。这些参数与 [CLI reference](https://code.claude.com/docs/en/cli-reference#cli-flags) 对照过，但未使用真实账号执行付费推理。自动化测试可以检查新 session ID、不同 cwd、relay 授权、进程清理和 broker 状态；真实 Claude 是否按要求调用工具仍须单独验收。
+
+默认子进程复用用户正常 Claude 登录，不使用会改变 OAuth 行为的 `--bare`。它禁用 transcript 持久化、auto memory 和普通 hooks，不使用 continue/resume。用户及 managed 规则仍可适用；managed hooks 不受普通会话设置的关闭覆盖。[Agent SDK sessions](https://code.claude.com/docs/en/agent-sdk/sessions)、[auto memory](https://code.claude.com/docs/en/settings-reference#automemoryenabled) 和 [hooks](https://code.claude.com/docs/en/settings-reference#disableallhooks) 说明了这些边界。
+
+真实验收使用 `examples/agent-config.json`，在运行 A 的同一系统账号下保留或完成 `claude auth login`：
+
+```sh
+bin/task-bridge-agent doctor --config agent.json
+bin/task-bridge-agent run --config agent.json
+```
+
+1. 从 B 提交带唯一标记的只读任务，检查 controller 收到分派并启动 Claude 子进程，随后由 Claude 调用 `task_accept`。
+2. Claude 通过桥接 Bash 返回 B 的 hostname、cwd 和标记，明确调用 `task_complete`；B 查询得到同一个持久结果。
+3. 提交第二个独立任务，记录不同的 Claude session UUID、临时目录及第二个 task_id/result，确认第一个子进程已经结束。
+4. 检查子进程启动参数无 continue/resume，MCP 配置只指向当前任务 relay，CLI 文本没有被当作最终结果。
+5. 核对停止控制器时子进程和临时资源的清理，以及异常退出后保留任务、命令和 B journal 证据的行为；不要直接重新执行结果不明的命令。
+
+记录日期、平台、二进制/Claude 版本、登录方式（不含凭据）、两个 task_id/session_id、执行标记及终态。`doctor` 不启动 Claude 或连接 broker，因此只算本地配置检查，不算该验收通过。
+
+## 可选手工交互 channel smoke
+
+该模式直接在一个交互式 Claude 会话内接收多个任务，不提供默认 worker 的每任务新会话隔离。开始前停止同一 agent 身份的控制器。远程 WebSocket MCP 和 channel 的行为依据 [Claude MCP 文档](https://code.claude.com/docs/en/mcp#option-4-add-a-remote-websocket-server)、[Channels reference](https://code.claude.com/docs/en/channels-reference)及 [CLI reference](https://code.claude.com/docs/en/cli-reference#cli-flags)。预览期功能或组织策略可能使工具连接成功但 channel 被拒绝。
 
 准备独立测试目录和可写的 B 工作区，用真实 Claude 版本记录以下信息：
 
@@ -93,7 +129,7 @@ claude --tools "" --strict-mcp-config --mcp-config agent-mcp.json \
   --dangerously-load-development-channels server:bridge
 ```
 
-`--tools ""` 的目的是使测试只使用指定远程工具。`--allowedTools` 是审批规则，不作为内置工具禁用的替代。开发 channel 的交互准入不被假定为 headless 可用；组织拒绝时记录实际原因，不将轮询视作 channel 验证成功。
+`--tools ""` 用于关闭本地执行和文件工具。`--allowedTools` 是审批规则，不作为内置工具禁用的替代。官方文档明确说明这个 development-channel 旗标在 `-p` 或 Agent SDK 中被忽略，不能用它实现默认 headless worker；组织拒绝时记录实际原因，不将轮询视作 channel 验证成功。
 
 必须等待 initialize 和 initialized 完成后发送通知。原计划记录 MCP `2026-07-28` 与 channel 存在兼容限制，计划目标为 `2025-11-25`；Go SDK 的最终协商结果必须从真实会话记录，不能仅凭配置推断。
 

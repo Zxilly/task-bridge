@@ -20,9 +20,18 @@ builds:
     goarch: [amd64, arm64]
     flags: [-trimpath]
     ldflags: [-s -w]
+  - id: agent
+    main: ./cmd/task-bridge-agent
+    binary: task-bridge-agent
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, windows]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags: [-s -w]
 
 archives:
-  - ids: [server, client]
+  - ids: [server, client, agent]
     formats: [tar.gz]
     format_overrides:
       - goos: windows
@@ -31,6 +40,7 @@ archives:
       - README.md
       - docs/**
       - examples/**
+      - internal/server/setup/*.md
       - deploy/Dockerfile
       - deploy/compose.yaml
       - deploy/Caddyfile

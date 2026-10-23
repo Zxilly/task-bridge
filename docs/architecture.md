@@ -1,10 +1,13 @@
 # 架构
 
-应用统一使用 Go。一个 broker 进程维护在线连接与短期等待者，SQLite 保存业务事实。A/B 都主动连接服务端；工作区命令在 B 执行。
+应用统一使用 Go。一个 broker 进程维护在线连接与短期等待者，SQLite 保存业务事实。A 控制器与 B 都主动连接服务端；A 每次任务启动新的 Claude Code 进程，工作区命令在 B 执行。
 
 ```mermaid
 flowchart LR
-    A[Claude Code A] <-->|MCP over WSS| C[Caddy]
+    A[task-bridge-agent] <-->|MCP over WSS| C[Caddy]
+    A -->|每任务新进程| P[Claude Code -p]
+    P <-->|loopback HTTP MCP| R[当前任务的 relay]
+    R <-->|转发工具| A
     C <--> S[task-bridge-server]
     S <--> DB[(SQLite WAL)]
     B[task-bridge-client] <-->|控制协议 over WSS| C
@@ -18,7 +21,7 @@ flowchart LR
 | 组件 | 实现 |
 | --- | --- |
 | HTTP 与管理 API | Go `net/http` |
-| A 的 MCP、B 的 stdio MCP | 官方 `github.com/modelcontextprotocol/go-sdk` |
+| A 的远程 MCP、本机 relay、B 的 stdio MCP | 官方 `github.com/modelcontextprotocol/go-sdk` |
 | 自定义 WebSocket transport | `github.com/coder/websocket`，连接到 SDK transport 接口 |
 | 状态与 journal | `database/sql` + `modernc.org/sqlite` |
 | 数据库迁移 | `github.com/pressly/goose/v3`，SQL 嵌入应用 |
@@ -27,19 +30,19 @@ flowchart LR
 | 监控 | `github.com/prometheus/client_golang`，受管理鉴权保护的 `/metrics` |
 | 进程执行 | Go `os/exec` 与平台进程控制 |
 
-服务端不需要 Bash、Node.js、Redis 或外部消息队列。B 需要已安装的 Bash。使用纯 Go SQLite 驱动，常规构建可关闭 CGO；race 检测仍需要对应平台的 race 工具链。
+服务端不需要 Bash、Node.js、Redis 或外部消息队列。A 需要已安装且可正常登录的 Claude Code CLI；B 需要 Bash。使用纯 Go SQLite 驱动，常规构建可关闭 CGO；race 检测仍需要对应平台的 race 工具链。
 
 ## 入口与身份
 
 | 入口 | 用途 | 凭据 |
 | --- | --- | --- |
-| `/mcp/agent` | A 的远程 WebSocket MCP | Claude 设备 token |
+| `/mcp/agent` | A 控制器的远程 WebSocket MCP，或可选手工 Claude channel | Claude 设备 token |
 | `/v1/client` | B 的版本化 JSON 控制协议 | executor 设备 token |
 | `/healthz`、`/readyz` | 进程与数据库探针 | 无设备凭据 |
 | `/setup/claude.md`、`/setup/client.md` | A/B agent 自配置指南 | 公开静态文档，不包含凭据 |
 | 独立的 `admin_listen` | 设备、任务、备份等本机管理 | 管理 token |
 
-A 的 transport 是 Claude 支持的远程 WebSocket MCP，自定义适配只负责 JSON-RPC 消息传输，不自行实现 MCP 工具协议。它不等同于 MCP 标准 Streamable HTTP。
+A 控制器使用官方 MCP SDK 接收远程 WebSocket MCP 消息，自定义 transport 只负责 JSON-RPC 消息传输。其与 broker 的连接仍是 WebSocket；控制器与每个 Claude 子进程之间使用本机 Streamable HTTP MCP，两种 transport 不互相替代。
 
 每个设备凭据关联独立 principal；A 还绑定 `agent_id`，B 绑定稳定 `executor_id`。workspace 绑定 executor。任务创建时固定执行位置；A 的工具参数不能重选 executor 或改变本地工作区根目录。
 
@@ -50,13 +53,23 @@ B 在 Hello 中报告本次实际配置的工作区子集，服务端核对归�
 ## 正常任务闭环
 
 1. B MCP 工具提交任务；broker 在 SQLite 提交成功后返回 `task_id`。
-2. 调度器选择匹配且空闲的 A 和 workspace，持久化分派，发 channel 通知。
-3. A 调用 `task_accept`；只有接受成功才获得命令授权。
-4. A 的 `bash` 请求建立持久命令，通过 B 控制连接派发。B 先写 journal，再启动 Bash。
+2. 调度器选择匹配且空闲的 A 和 workspace，持久化分派，向控制器发 channel 通知。
+3. 控制器核对任务，建立只绑定该任务的本机 MCP relay 并启动新的 Claude Code 会话；Claude 首先通过 relay 调用 `task_accept`，接受成功后才能执行命令。
+4. Claude 通过 relay 发出 `bash` 请求，broker 建立持久命令并通过 B 控制连接派发。B 先写 journal，再启动 Bash。
 5. B 分块保存输出与终态并上传。broker 保存后确认，MCP 工具可以等待或分页查询。
-6. A 调用 `task_complete`；broker 保存不可变的最终结果，B 等待者读取同一份结果。
+6. Claude 通过 relay 调用 `task_complete`；broker 保存不可变的最终结果，B 等待者读取同一份结果。控制器清理该子进程的临时目录和 relay，后继任务启动另一个会话。
 
 channel 通知没有业务 ACK，`offered` 与 `running` 分开。长任务不依赖某一个 MCP 请求持续打开。B 的网络读取、MCP handler、等待者和进程执行并发运行。
+
+## A 的逐任务会话
+
+`task-bridge-agent` 保持一个 A 身份的上游连接。每个任务使用新的 Claude session UUID 和临时工作目录；启动参数不带 `--resume` 或 `--continue`，并使用 `--no-session-persistence`。临时 relay 只接受该任务的凭据和授权参数，Claude 子进程不能借它切换到其他任务、workspace 或 assignment。
+
+Claude 通过 `--tools ""` 关闭本地执行和文件工具，`--strict-mcp-config` 限定本次 MCP 配置，`--allowedTools` 批准该 relay 的工具。子会话关闭 auto memory 和普通 hooks，保留现有账号登录。用户或 managed Claude 指令与管理策略仍可能生效；不同任务不共享聊天 transcript，不代表所有全局设置、文件系统或账号资源都被隔离。
+
+控制器不解析 Claude 普通文本作为任务结果。子进程未完成任务即退出、连接中断或收到 interrupted 分派时，控制器报错并交给显式恢复流程，不自动换 key 重试，也不恢复旧 transcript。任务和命令事实以 broker 与 B journal 为准。
+
+手工交互 channel 模式仍可直接连接 `/mcp/agent`，但同一 Claude 会话会连续处理多个任务；它与默认控制器不能同时占用同一 A 身份。headless 子进程不依赖 custom development channel 的准入。
 
 ## 持久化与恢复原则
 

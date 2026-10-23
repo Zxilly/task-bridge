@@ -1,0 +1,6 @@
+{
+  "server_url": "ws://127.0.0.1:8080/mcp/agent",
+  "token_env": "BRIDGE_AGENT_TOKEN",
+  "claude_path": "claude",
+  "state_dir": "./data/agent-state"
+}

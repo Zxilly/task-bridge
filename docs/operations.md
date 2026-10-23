@@ -1,10 +1,10 @@
 # 运行与维护
 
-本项目按单个所有者、一个 broker 进程和本地 SQLite 部署。平台与真实 Claude channel 的验证记录见 [compatibility.md](compatibility.md)。下列文件是可执行部署模板，仍需在目标 Linux 主机完成 HTTPS/WSS、代理重载和恢复演练。
+本项目按单个所有者、一个 broker 进程和本地 SQLite 部署。平台、逐任务 Claude 运行与可选手工 channel 的验证记录见 [compatibility.md](compatibility.md)。下列文件是可执行部署模板，仍需在目标 Linux 主机完成 HTTPS/WSS、代理重载和恢复演练。
 
 ## 本地运行
 
-从源码构建两个应用，按 README 创建 `server.json`。服务端配置如下：
+从源码构建 server、agent 和 client 三个应用，按 README 创建 `server.json`。服务端配置如下：
 
 | 字段 | 含义 |
 | --- | --- |
@@ -45,6 +45,40 @@ bin/task-bridge-client mcp --config client.json
 普通 doctor 检查本地配置和依赖；`--connect` 只主动探测 TCP/TLS 可达性，不发送认证握手或注册 executor，不能用它证明 token 已被服务端接受。两种模式都不打印 token。stdio 运行时 stdout 只包含 MCP JSON-RPC，日志位于 stderr。客户端生命周期跟随宿主；关闭宿主或 stdin EOF 会触发清理，不作为后台 daemon 使用。
 
 Windows 的 `root` 使用 Windows 路径，`bash_path` 通常为 `C:\Program Files\Git\bin\bash.exe`。Go 配置中的路径按 Windows 规则解析；Bash 命令内部的路径由 Git Bash 解释。cwd 可使用 workspace 内相对目录。不要把 `/c/...` shell 路径直接当成 Go 的 Windows cwd 字段。
+
+## A 控制器与 Claude 登录
+
+默认 A 使用 `task-bridge-agent run`。控制器接收 broker 的 channel 通知，并为每个任务启动一个新的 `claude --print` 子进程。Claude 通过当前任务的本机 HTTP MCP relay 调用远程工具，不直接在 headless 模式加载 development channel。
+
+在运行控制器的同一个系统账号下安装 Claude Code，并完成 `claude auth login`。已有有效登录可以直接复用。不要复制认证文件或为了运行控制器切换为 API key。`--bare` 不使用订阅 OAuth，因此默认启动参数不使用它。
+
+复制 `examples/agent-config.json`，填写：
+
+| 字段 | 含义 |
+| --- | --- |
+| `server_url` | broker 的 `/mcp/agent` WS/WSS 地址；公网必须使用 WSS |
+| `token_env` 或 `token_file` | `claude` 角色设备 token，二选一；与 Claude 账号登录分开 |
+| `claude_path` | Claude CLI 名称或可执行文件路径，默认 `claude` |
+| `state_dir` | 私有状态目录，默认配置目录下的 `agent-state`；持有排他锁并容纳任务临时目录 |
+| `model` | 可选；未填写时使用 Claude 的正常模型选择 |
+| `allow_insecure_ws` | 仅为受控开发网络显式允许非 loopback 的明文 WS，默认关闭 |
+
+相对 `state_dir` 和 `token_file` 以配置文件目录解析；含目录分隔符的相对 `claude_path` 也使用该基准。配置不做 `${VAR}` 字符串展开。不要将 token 提交到仓库或放在命令行参数中。
+
+```sh
+claude --version
+claude auth login
+bin/task-bridge-agent doctor --config agent.json
+bin/task-bridge-agent run --config agent.json
+```
+
+省略 `run` 子命令也会启动控制器。`doctor` 不运行 Claude、不调用模型、不联网，只验证配置、可执行文件路径和设备凭据是否存在；不能用它证明 Claude 登录或设备鉴权已通过。控制器日志写入 stderr。每个 A 身份只运行一个控制器，同一 `state_dir` 由文件锁排他使用；停止实例前先检查任务状态。
+
+每个任务使用不同的 session UUID、临时 cwd 与本机 relay 凭据，启动参数不带 continue/resume，并关闭 transcript 持久化。子会话禁用本地执行和文件工具，只加载本次 relay 的 MCP 配置。`task_progress` 与 `task_complete` 仍是回传进度和结果的接口，Claude 的 stdout 或退出码不替代 broker 里的最终结果。
+
+子进程设置 `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`，并通过会话设置关闭 auto memory 和普通 hooks，避免跨任务自动记忆。managed hooks 只能由 managed 设置关闭；用户或 managed CLAUDE 规则仍可能进入上下文。保留用户登录和全局规则不等于复用旧任务的聊天历史，临时目录也不构成操作系统沙箱。官方参数和设置说明见 [CLI reference](https://code.claude.com/docs/en/cli-reference#cli-flags)、[autoMemoryEnabled](https://code.claude.com/docs/en/settings-reference#automemoryenabled) 与 [disableAllHooks](https://code.claude.com/docs/en/settings-reference#disableallhooks)。
+
+控制器在会话结束后清理其临时 cwd 与 MCP 配置。子进程未调用 `task_complete` 就退出，或 broker 报告 interrupted 分派时，控制器报错并断开，不自动重试。先检查原 task/command、B journal 及进程证据；必要时停止控制器，用 [手工交互模式](compatibility.md#可选手工交互-channel-smoke) 检查任务，再明确调用 `task_resume`。未知执行结果仍须由管理员核实处理，不能靠启动新 Claude 会话绕过。
 
 ## Compose 与 Caddy
 

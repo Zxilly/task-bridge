@@ -2,7 +2,7 @@
 
 Use these instructions when the user asks you to configure a local MCP host to submit tasks to Task Bridge and execute the resulting Bash commands on this machine. The host starts `task-bridge-client` as a stdio MCP subprocess. That process also maintains an outbound control WebSocket to the broker. It is not the Claude-facing WebSocket MCP endpoint.
 
-Claude Code agent A follows [Configure Claude Code](claude.md). This public document provides no credentials and cannot register an executor, workspace, or agent.
+Agent A follows [Configure Task Bridge agent A](claude.md). Its default controller starts a separate Claude Code session for each task. This public document provides no credentials and cannot register an executor, workspace, or agent.
 
 ## Determine the broker address
 
@@ -132,20 +132,22 @@ Call `tasks_list` with the configured `workspace_id` and a small `limit`, such a
 
 ## Run a minimal end-to-end smoke task
 
-Keep the host-owned B subprocess running and arrange for the matching A session to be idle and channel-enabled. Call `tasks_submit` once with real values:
+Keep the host-owned B subprocess running and arrange for the matching `task-bridge-agent` controller to be online. It receives the offer and starts a fresh Claude Code process for the task; B does not start that process. Call `tasks_submit` once with real values:
 
 ```json
 {
   "workspace_id": "<WORKSPACE_ID>",
   "idempotency_key": "setup-smoke-<NEW_UUID>",
   "deadline_ms": 300000,
-  "prompt": "Accept this assignment, then use the bridge bash tool on B to run: printf 'task-bridge-smoke-<NONCE>\\n'; hostname; pwd. Do not write files. Wait for the command's known terminal result, read its output, and complete the task with the marker, hostname, and working directory in the summary."
+  "prompt": "Use the bridge bash tool on B to run: printf 'task-bridge-smoke-<NONCE>\\n'; hostname; pwd. Do not write files. Wait for the command's known terminal result, read its output, and complete the task with the marker, hostname, and working directory in the summary."
 }
 ```
 
 Save the returned `task_id`. If submission times out or disconnects before its result is known, retry the identical request with the same idempotency key. Do not create a new key merely to escape an uncertain result.
 
-Call `tasks_wait` with that `task_id` and `wait_ms: 10000`; if it remains pending, use the same ID with `tasks_get` or another bounded wait. A successful smoke test has a durable `succeeded` task, a known successful command result, and output identifying this B machine, the configured workspace, and the chosen nonce. Confirm with A that the task arrived as an unsolicited channel event. A wait timeout or a queued task is not success.
+Call `tasks_wait` with that `task_id` and `wait_ms: 10000`; if it remains pending, use the same ID with `tasks_get` or another bounded wait. A successful smoke test has a durable `succeeded` task, a known successful command result, and output identifying this B machine, the configured workspace, and the chosen nonce. Confirm with A's operator that its controller launched the task's Claude process. A wait timeout, queued task, Claude terminal reply, or process exit alone is not success.
+
+For session-isolation acceptance, submit a second task with a different key and nonce. Have A's operator verify a different Claude session ID and temporary working directory, and confirm the second durable result from B. If A intentionally uses the optional manual interactive-channel mode, verify its unsolicited channel delivery separately; that mode keeps one conversation across tasks.
 
 If A is unavailable, stop at “B authenticated; end-to-end test pending” and retain the task ID if one was already submitted. Do not configure or acquire A's token as part of B setup unless the user also requested that separate work.
 
@@ -154,6 +156,6 @@ If A is unavailable, stop at “B authenticated; end-to-end test pending” and 
 - `unauthorized` or forbidden scope: check the role, executor/workspace mapping, and token source; ask the operator about revocation. Do not try another role's token.
 - Duplicate connection or journal lock: locate the existing host-owned B process; do not create a new journal or kill unrelated processes.
 - `journal_mismatch`, server-epoch changes, or unknown execution: retain the journal and logs, stop automatic setup retries, and involve the operator. `reconcile` is an explicit recovery operation with reviewed evidence, not an installation shortcut.
-- Task stays queued: check the matching A session and that B reports this workspace. Do not resubmit under a new key to force scheduling.
+- Task stays queued: check the matching A controller and that B reports this workspace. Do not resubmit under a new key to force scheduling.
 
 Report the binary version and source revision when built locally, changed configuration paths, host entry name, nonsecret endpoint and IDs, doctor results with their limited scope, authenticated `tasks_list` outcome, and any smoke task ID/result. Never include token contents. State clearly whether configuration, authenticated connection, and end-to-end execution have each been verified.
