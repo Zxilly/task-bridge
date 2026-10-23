@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "bridge": {
+      "type": "ws",
+      "url": "wss://bridge.example.com/mcp/agent",
+      "headers": {
+        "Authorization": "Bearer ${BRIDGE_AGENT_TOKEN}"
+      },
+      "timeout": 150000
+    }
+  }
+}

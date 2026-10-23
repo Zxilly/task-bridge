@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "bridge-tasks": {
+      "command": "/absolute/path/to/bridge-client",
+      "args": [
+        "mcp",
+        "--config",
+        "/absolute/path/to/client.json"
+      ]
+    }
+  }
+}

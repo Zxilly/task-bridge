@@ -1,0 +1,15 @@
+{
+  "server_url": "ws://127.0.0.1:8080/v1/client",
+  "executor_id": "laptop",
+  "journal_path": "./data/client-journal.db",
+  "token_env": "BRIDGE_EXECUTOR_TOKEN",
+  "workspaces": {
+    "demo": {
+      "root": "C:\\Projects\\demo",
+      "bash_path": "C:\\Program Files\\Git\\bin\\bash.exe",
+      "env": {}
+    }
+  },
+  "max_output_bytes": 10485760,
+  "max_journal_bytes": 1073741824
+}

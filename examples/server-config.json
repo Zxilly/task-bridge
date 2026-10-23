@@ -1,0 +1,8 @@
+{
+  "listen": "127.0.0.1:8080",
+  "database": "./data/bridge.db",
+  "admin_listen": "127.0.0.1:8081",
+  "admin_token_env": "BRIDGE_ADMIN_TOKEN",
+  "max_queued_tasks": 1000,
+  "max_database_bytes": 2147483648
+}

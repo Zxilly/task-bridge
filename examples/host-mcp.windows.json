@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "bridge-tasks": {
+      "command": "C:\\Bridge\\bridge-client.exe",
+      "args": [
+        "mcp",
+        "--config",
+        "C:\\Bridge\\client.json"
+      ]
+    }
+  }
+}
