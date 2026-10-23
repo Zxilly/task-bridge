@@ -75,30 +75,38 @@ func (c *Client) MCPServer() *mcp.Server {
 		if err != nil {
 			return clientToolResult(nil, err, ""), nil, nil
 		}
-		var submitted map[string]any
+		var submitted model.Task
 		if err = json.Unmarshal(response, &submitted); err != nil {
 			return clientToolResult(nil, err, ""), nil, nil
 		}
-		id := clientTaskID(submitted)
+		id := submitted.ID
 		if id == "" {
-			return clientToolResult(submitted, nil, ""), nil, nil
+			return clientToolResult(response, nil, ""), nil, nil
 		}
 		response, err = c.RPC(ctx, "tasks_wait", WaitArgs{TaskID: id, WaitMS: args.WaitMS})
 		if err != nil {
 			return clientToolResult(nil, err, id), nil, nil
 		}
-		var output any
-		if err = json.Unmarshal(response, &output); err != nil {
-			return clientToolResult(nil, err, id), nil, nil
-		}
-		if object, ok := output.(map[string]any); ok {
-			object["task_id"] = id
-		} else {
-			output = map[string]any{"task_id": id, "result": output}
-		}
-		return clientToolResult(output, nil, id), nil, nil
+		return clientRunResult(response, id), nil, nil
 	})
 	return server
+}
+
+func clientRunResult(data json.RawMessage, taskID string) *mcp.CallToolResult {
+	if !json.Valid(data) {
+		return clientToolResult(nil, errors.New("broker returned invalid task JSON"), taskID)
+	}
+	// Waiting is an open JSON forwarding boundary. Only replace the submitted
+	// identity; keep unknown fields, absent fields and exact user numbers intact.
+	var object map[string]json.RawMessage
+	if json.Unmarshal(data, &object) == nil && object != nil {
+		object["task_id"] = model.JSON(taskID)
+		return clientToolResult(object, nil, taskID)
+	}
+	return clientToolResult(struct {
+		TaskID string          `json:"task_id"`
+		Result json.RawMessage `json:"result"`
+	}{TaskID: taskID, Result: data}, nil, taskID)
 }
 
 func addClientTool[In any](server *mcp.Server, c *Client, name, description string, validate func(In) error) {
@@ -117,11 +125,12 @@ func addClientTool[In any](server *mcp.Server, c *Client, name, description stri
 		if err != nil {
 			return clientToolResult(nil, err, id), nil, nil
 		}
-		var output any
-		if err = json.Unmarshal(data, &output); err != nil {
-			return clientToolResult(nil, err, id), nil, nil
+		if !json.Valid(data) {
+			return clientToolResult(nil, errors.New("broker returned invalid task JSON"), id), nil, nil
 		}
-		return clientToolResult(output, nil, id), nil, nil
+		// This tool only forwards the broker result. Preserve its JSON instead
+		// of decoding unknown fields or user numbers through interface values.
+		return clientToolResult(data, nil, id), nil, nil
 	})
 }
 
@@ -135,13 +144,24 @@ func clientTaskID(value any) string {
 		return v.TaskID
 	case EventsArgs:
 		return v.TaskID
-	case map[string]any:
-		if id, _ := v["task_id"].(string); id != "" {
-			return id
+	case model.Task:
+		return v.ID
+	case model.TaskSnapshot:
+		return v.Task.ID
+	case model.TaskWaitResult:
+		return v.TaskID
+	case json.RawMessage:
+		var identity struct {
+			TaskID string `json:"task_id"`
+			Task   struct {
+				ID string `json:"task_id"`
+			} `json:"task"`
 		}
-		if task, ok := v["task"].(map[string]any); ok {
-			id, _ := task["task_id"].(string)
-			return id
+		if json.Unmarshal(v, &identity) == nil {
+			if identity.TaskID != "" {
+				return identity.TaskID
+			}
+			return identity.Task.ID
 		}
 	}
 	return ""
@@ -181,12 +201,8 @@ func clientToolResult(value any, err error, taskID string) *mcp.CallToolResult {
 	return result
 }
 
-func clientErrorValue(err *model.Error, taskID string) map[string]any {
-	value := map[string]any{"error": err}
-	if taskID != "" {
-		value["task_id"] = taskID
-	}
-	return value
+func clientErrorValue(err *model.Error, taskID string) model.ErrorResult {
+	return model.ErrorResult{Error: err, TaskID: taskID}
 }
 
 func clientSmallError(code, message, taskID string) *mcp.CallToolResult {
@@ -194,7 +210,7 @@ func clientSmallError(code, message, taskID string) *mcp.CallToolResult {
 	result := &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(model.JSON(value))}}, IsError: true}
 	if wire, err := json.Marshal(result); err != nil || len(wire) > model.MaxToolBytes {
 		// A malicious or corrupt task ID must not defeat the final bound.
-		delete(value, "task_id")
+		value.TaskID = ""
 		result.Content = []mcp.Content{&mcp.TextContent{Text: string(model.JSON(value))}}
 	}
 	return result

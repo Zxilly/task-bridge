@@ -17,30 +17,9 @@ import (
 	"github.com/google/uuid"
 )
 
-type reconcileRecord struct {
-	CommandID    string       `json:"command_id"`
-	TaskID       string       `json:"task_id"`
-	WorkspaceID  string       `json:"workspace_id"`
-	State        string       `json:"state"`
-	Command      string       `json:"command"`
-	OperationKey string       `json:"operation_key"`
-	Cwd          string       `json:"cwd,omitempty"`
-	TimeoutMS    int64        `json:"timeout_ms"`
-	ExitCode     *int         `json:"exit_code,omitempty"`
-	Signal       string       `json:"signal,omitempty"`
-	FinishedAt   int64        `json:"finished_at,omitempty"`
-	DurationMS   int64        `json:"duration_ms,omitempty"`
-	Error        *model.Error `json:"error,omitempty"`
-}
-type reconcileArgs struct {
-	Reason  string            `json:"reason"`
-	Records []reconcileRecord `json:"records"`
-}
-type reconcileResponse struct {
-	KnownCommandIDs  []string                      `json:"known_command_ids"`
-	OrphanCommandIDs []string                      `json:"orphan_command_ids"`
-	ServerResults    map[string]model.CommandEvent `json:"server_results,omitempty"`
-}
+type reconcileRecord = model.ExecutorReconcileRecord
+type reconcileArgs = model.ExecutorReconcileArgs
+type reconcileResponse = model.ExecutorReconcileResult
 type reconciliationOutcome struct {
 	id           string
 	known        bool

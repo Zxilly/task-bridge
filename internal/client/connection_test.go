@@ -126,7 +126,7 @@ func TestReconnectReplaysResultWithoutExecutingAgain(t *testing.T) {
 					return
 				}
 				if rpc.Method == "command_authorize" {
-					if send(model.Envelope{Type: "response", RequestID: msg.RequestID, Payload: model.JSON(map[string]bool{"allowed": true})}) != nil {
+					if send(model.Envelope{Type: "response", RequestID: msg.RequestID, Payload: model.JSON(model.CommandAuthorization{Allowed: true})}) != nil {
 						return
 					}
 				}
@@ -227,7 +227,7 @@ func TestMCPWaitDoesNotBlockExecution(t *testing.T) {
 						return
 					}
 				case "command_authorize":
-					if send(model.Envelope{Type: "response", RequestID: msg.RequestID, Payload: model.JSON(map[string]bool{"allowed": true})}) != nil {
+					if send(model.Envelope{Type: "response", RequestID: msg.RequestID, Payload: model.JSON(model.CommandAuthorization{Allowed: true})}) != nil {
 						return
 					}
 				}
@@ -240,7 +240,7 @@ func TestMCPWaitDoesNotBlockExecution(t *testing.T) {
 					mu.Lock()
 					id := waitID
 					mu.Unlock()
-					if send(model.Envelope{Type: "response", RequestID: id, Payload: model.JSON(map[string]any{"task_id": "task-1", "state": "succeeded"})}) != nil {
+					if send(model.Envelope{Type: "response", RequestID: id, Payload: model.JSON(model.Task{ID: "task-1", State: "succeeded"})}) != nil {
 						return
 					}
 				}
@@ -442,16 +442,14 @@ func TestPartialAcknowledgementDoesNotAmplifyReplayAndReconnectResetsWindow(t *t
 
 func TestExecutionDiagnosticsPreserveFailureReasonAndNonzeroExit(t *testing.T) {
 	c, ctx := clientMCPTestPeer(t, func(rpc model.RPC) model.Envelope {
-		var args struct {
-			CommandID string `json:"command_id"`
-		}
+		var args model.CommandAuthorizeArgs
 		if json.Unmarshal(rpc.Args, &args) != nil {
 			return model.Envelope{Error: model.AsError(fmt.Errorf("bad arguments"))}
 		}
 		if args.CommandID == "auth-failure" {
 			return model.Envelope{Error: &model.Error{Code: "forbidden", Message: "review current assignment"}}
 		}
-		return model.Envelope{Payload: model.JSON(map[string]bool{"allowed": args.CommandID != "auth-denied"})}
+		return model.Envelope{Payload: model.JSON(model.CommandAuthorization{Allowed: args.CommandID != "auth-denied"})}
 	})
 	var err error
 	c.journal, err = OpenJournal(filepath.Join(t.TempDir(), "journal.db"))

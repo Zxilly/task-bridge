@@ -513,15 +513,13 @@ func (c *Client) execute(root context.Context, dispatch model.Dispatch) {
 		return
 	}
 	authCtx, authCancel := context.WithTimeout(ctx, 15*time.Second)
-	response, err := c.RPC(authCtx, "command_authorize", map[string]any{"command_id": id, "assignment_id": dispatch.Command.AssignmentID})
+	response, err := c.RPC(authCtx, "command_authorize", model.CommandAuthorizeArgs{CommandID: id, AssignmentID: dispatch.Command.AssignmentID})
 	authCancel()
 	if err != nil {
 		notStarted("authorization_failed", "could not obtain current execution authorization: "+err.Error())
 		return
 	}
-	var auth struct {
-		Allowed bool `json:"allowed"`
-	}
+	var auth model.CommandAuthorization
 	if json.Unmarshal(response, &auth) != nil {
 		notStarted("authorization_failed", "the broker returned invalid execution authorization")
 		return
