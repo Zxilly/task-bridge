@@ -49,7 +49,9 @@ type EventsArgs struct {
 // MCPServer provides only task tools. Its handlers can wait concurrently while
 // the independent outbound connection continues executing remote commands.
 func (c *Client) MCPServer() *mcp.Server {
-	server := mcp.NewServer(&mcp.Implementation{Name: "task-bridge-client", Version: model.Version}, nil)
+	implementation := &mcp.Implementation{Name: "task-bridge-client", Version: model.Version}
+	server := mcp.NewServer(implementation, nil)
+	addClientResultBounds(server, implementation)
 	addClientTool(server, c, "tasks_submit", "Submit a durable task. Reuse idempotency_key when retrying the same task.", func(args SubmitArgs) error { return c.validateWorkspace(args.WorkspaceID) })
 	addClientTool(server, c, "tasks_get", "Get durable task status and the final result.", func(TaskArgs) error { return nil })
 	addClientTool(server, c, "tasks_wait", "Wait up to 60 seconds. Timeout or cancellation of this call does not cancel the task.", validateWait)
