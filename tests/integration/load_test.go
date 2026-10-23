@@ -29,7 +29,7 @@ type loadPeer struct {
 	root        string
 	b           *client.Client
 	a           *mcp.ClientSession
-	offers      chan map[string]any
+	offers      chan model.ChannelNotification
 	task        model.Task
 	assignment  string
 	commandID   string
@@ -57,7 +57,7 @@ func startLoadExecutor(t *testing.T, ctx context.Context, cfg client.Config) *cl
 	return c
 }
 
-func connectLoadAgent(t *testing.T, ctx context.Context, url, token string, offers chan map[string]any) *mcp.ClientSession {
+func connectLoadAgent(t *testing.T, ctx context.Context, url, token string, offers chan model.ChannelNotification) *mcp.ClientSession {
 	t.Helper()
 	socket, _, err := websocket.Dial(ctx, url, &websocket.DialOptions{
 		Subprotocols: []string{"mcp"},
@@ -116,18 +116,18 @@ func loadAccept(t *testing.T, ctx context.Context, p *loadPeer, expectedTaskID s
 	for {
 		select {
 		case n := <-p.offers:
-			meta, ok := n["meta"].(map[string]any)
-			if !ok || meta["workspace_id"] != p.workspaceID {
+			meta := n.Meta
+			if meta.WorkspaceID != p.workspaceID {
 				t.Fatalf("agent received another workspace's offer: %+v", n)
 			}
-			if meta["task_id"] == p.task.ID && expectedTaskID != p.task.ID {
+			if meta.TaskID == p.task.ID && expectedTaskID != p.task.ID {
 				continue // A delayed duplicate of the already completed first offer.
 			}
-			if meta["task_id"] != expectedTaskID {
+			if meta.TaskID != expectedTaskID {
 				t.Fatalf("agent received an unexpected task: %+v", n)
 			}
-			assignment, ok := meta["assignment_id"].(string)
-			if !ok || assignment == "" {
+			assignment := meta.AssignmentID
+			if assignment == "" {
 				t.Fatal("offer omitted its assignment")
 			}
 			tool(t, ctx, p.a, "task_accept", map[string]any{"task_id": expectedTaskID, "assignment_id": assignment})
@@ -202,7 +202,7 @@ func TestSmallScaleFiveAgentsTenExecutors(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			p.offers = make(chan map[string]any, 32)
+			p.offers = make(chan model.ChannelNotification, 32)
 			p.a = connectLoadAgent(t, f.ctx, agentURL, tokenA, p.offers)
 		}
 	}

@@ -34,11 +34,11 @@ import (
 
 type observeTransport struct {
 	mcp.Transport
-	offers chan map[string]any
+	offers chan model.ChannelNotification
 }
 type observeConnection struct {
 	mcp.Connection
-	offers chan map[string]any
+	offers chan model.ChannelNotification
 }
 
 func (t observeTransport) Connect(ctx context.Context) (mcp.Connection, error) {
@@ -52,7 +52,7 @@ func (c observeConnection) Read(ctx context.Context) (jsonrpc.Message, error) {
 			return nil, e
 		}
 		if req, ok := m.(*jsonrpc.Request); ok && req.Method == "notifications/claude/channel" {
-			var p map[string]any
+			var p model.ChannelNotification
 			if e = json.Unmarshal(req.Params, &p); e != nil {
 				return nil, e
 			}
@@ -74,7 +74,7 @@ type fixture struct {
 	b      *client.Client
 	a      *mcp.ClientSession
 	host   *mcp.ClientSession
-	offers chan map[string]any
+	offers chan model.ChannelNotification
 	root   string
 	tokenA string
 	cfg    client.Config
@@ -168,7 +168,7 @@ func setup(t *testing.T) *fixture {
 	if e != nil {
 		t.Fatal(e)
 	}
-	offers := make(chan map[string]any, 32)
+	offers := make(chan model.ChannelNotification, 32)
 	a, e := mcp.NewClient(&mcp.Implementation{Name: "A-protocol-test-not-Claude", Version: "1"}, nil).Connect(ctx, observeTransport{mcpagent.NewTransport(socket), offers}, nil)
 	if e != nil {
 		t.Fatal(e)
@@ -201,21 +201,21 @@ func tool(t *testing.T, ctx context.Context, s *mcp.ClientSession, name string, 
 	}
 	return out
 }
-func offer(t *testing.T, f *fixture) map[string]any {
+func offer(t *testing.T, f *fixture) model.ChannelMetadata {
 	t.Helper()
 	select {
 	case n := <-f.offers:
-		return n["meta"].(map[string]any)
+		return n.Meta
 	case <-f.ctx.Done():
 		t.Fatal("channel notification not received", f.ctx.Err())
-		return nil
+		return model.ChannelMetadata{}
 	}
 }
 func accept(t *testing.T, f *fixture) (string, string) {
 	t.Helper()
 	o := offer(t, f)
-	id := o["task_id"].(string)
-	assignment := o["assignment_id"].(string)
+	id := o.TaskID
+	assignment := o.AssignmentID
 	tool(t, f.ctx, f.a, "task_accept", map[string]any{"task_id": id, "assignment_id": assignment})
 	return id, assignment
 }
@@ -445,7 +445,7 @@ func TestSnapshotRollbackReconcilesBJournalWithoutReexecution(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	offers := make(chan map[string]any, 16)
+	offers := make(chan model.ChannelNotification, 16)
 	a, e := mcp.NewClient(&mcp.Implementation{Name: "recovery-A-protocol-test", Version: "1"}, nil).Connect(f.ctx, observeTransport{mcpagent.NewTransport(socket), offers}, nil)
 	if e != nil {
 		t.Fatal(e)

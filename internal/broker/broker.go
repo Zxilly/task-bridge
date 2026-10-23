@@ -21,7 +21,7 @@ import (
 type agent struct {
 	p         model.Principal
 	id        string
-	notify    func(context.Context, map[string]any) error
+	notify    model.ChannelNotifier
 	lastOffer int64
 }
 type ClientPeer struct {
@@ -91,7 +91,7 @@ func (b *Broker) Check(ctx context.Context, p model.Principal) error {
 	})
 }
 
-func (b *Broker) AgentConnected(ctx context.Context, p model.Principal, id string, notify func(context.Context, map[string]any) error) error {
+func (b *Broker) AgentConnected(ctx context.Context, p model.Principal, id string, notify model.ChannelNotifier) error {
 	if p.Kind != "claude" {
 		return model.Err("forbidden", "Claude credentials required")
 	}
@@ -275,8 +275,8 @@ func (b *Broker) Maintain(ctx context.Context) error {
 }
 func (b *Broker) tick(ctx context.Context) {
 	type notice struct {
-		a      *agent
-		params map[string]any
+		a            *agent
+		notification model.ChannelNotification
 	}
 	var notices []notice
 	var deliveries []struct {
@@ -377,7 +377,17 @@ func (b *Broker) tick(ctx context.Context) {
 					if t.State == "interrupted" {
 						content = "Interrupted task. Inspect task_get, then explicitly call task_resume with previous_assignment_id before executing anything.\n" + t.Prompt
 					}
-					notices = append(notices, notice{a, map[string]any{"content": content, "meta": map[string]string{"task_id": t.ID, "assignment_id": t.AssignmentID, "workspace_id": t.WorkspaceID}}})
+					notices = append(notices, notice{
+						a: a,
+						notification: model.ChannelNotification{
+							Content: content,
+							Meta: model.ChannelMetadata{
+								TaskID:       t.ID,
+								AssignmentID: t.AssignmentID,
+								WorkspaceID:  t.WorkspaceID,
+							},
+						},
+					})
 				}
 			}
 		}
@@ -417,7 +427,7 @@ func (b *Broker) tick(ctx context.Context) {
 	}
 	for _, n := range notices {
 		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		e := n.a.notify(ctx, n.params)
+		e := n.a.notify(ctx, n.notification)
 		cancel()
 		if e != nil {
 			b.AgentDisconnected(n.a.p, n.a.id)

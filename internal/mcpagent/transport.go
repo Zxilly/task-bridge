@@ -77,15 +77,14 @@ func (c *wsConnection) Close() error {
 }
 func (c *wsConnection) SessionID() string { return c.id }
 
-func (c *wsConnection) notifyChannel(ctx context.Context, params map[string]any) error {
+func (c *wsConnection) notifyChannel(ctx context.Context, notification model.ChannelNotification) error {
 	// The SDK exposes custom methods for client requests, but no public
 	// server-side extension notification method. Use its message encoder on
 	// the same connection for this one extension notification (no request ID).
-	content, ok := params["content"].(string)
-	if !ok || content == "" {
+	if notification.Content == "" {
 		return fmt.Errorf("channel content must be a non-empty string")
 	}
-	data, err := json.Marshal(params)
+	data, err := json.Marshal(notification)
 	if err != nil {
 		return err
 	}

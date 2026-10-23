@@ -51,7 +51,7 @@ func newFixture(t *testing.T) *brokerFixture {
 		t.Fatal(err)
 	}
 	f := &brokerFixture{t: t, ctx: ctx, b: b, store: store, executor: executor, claude: claude, peer: peer, connectionID: "connection-1"}
-	if err = b.AgentConnected(ctx, claude, f.connectionID, func(context.Context, map[string]any) error { return nil }); err != nil {
+	if err = b.AgentConnected(ctx, claude, f.connectionID, func(context.Context, model.ChannelNotification) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	return f
@@ -177,7 +177,7 @@ func TestDisconnectRequiresExplicitResumeAndFencesOldAssignment(t *testing.T) {
 		t.Fatalf("bad interruption: %+v", interrupted)
 	}
 	f.connectionID = "connection-2"
-	if err := f.b.AgentConnected(f.ctx, f.claude, f.connectionID, func(context.Context, map[string]any) error { return nil }); err != nil {
+	if err := f.b.AgentConnected(f.ctx, f.claude, f.connectionID, func(context.Context, model.ChannelNotification) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	_, err := f.agent("task_accept", map[string]any{"task_id": task.ID, "assignment_id": task.AssignmentID})
@@ -624,7 +624,7 @@ func TestRevokedHandshakeAndOldCredentialCannotCloseRotatedAgent(t *testing.T) {
 	if err = f.b.Revoke(f.ctx, f.claude.ID); err != nil {
 		t.Fatal(err)
 	}
-	err = f.b.AgentConnected(f.ctx, f.claude, "stale-handshake", func(context.Context, map[string]any) error { return nil })
+	err = f.b.AgentConnected(f.ctx, f.claude, "stale-handshake", func(context.Context, model.ChannelNotification) error { return nil })
 	requireCode(t, err, "unauthorized")
 	rotated, _, err := f.b.CreateDevice(f.ctx, model.Principal{Kind: "claude", AgentID: f.claude.AgentID, WorkspaceID: f.claude.WorkspaceID})
 	if err != nil {
@@ -632,7 +632,7 @@ func TestRevokedHandshakeAndOldCredentialCannotCloseRotatedAgent(t *testing.T) {
 	}
 	closed := false
 	f.b.RegisterAgentCloser("rotated", func() { closed = true })
-	if err = f.b.AgentConnected(f.ctx, rotated, "rotated", func(context.Context, map[string]any) error { return nil }); err != nil {
+	if err = f.b.AgentConnected(f.ctx, rotated, "rotated", func(context.Context, model.ChannelNotification) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if err = f.b.Revoke(f.ctx, f.claude.ID); err != nil {
@@ -871,10 +871,22 @@ func TestSchedulingUsesExecutorReportedWorkspaceSubset(t *testing.T) {
 		t.Fatal(err)
 	}
 	notices := map[string]int{}
-	notify := func(_ context.Context, message map[string]any) error {
-		workspace := message["meta"].(map[string]string)["workspace_id"]
-		notices[workspace]++
+	offers := map[string]model.ChannelNotification{}
+	notify := func(_ context.Context, message model.ChannelNotification) error {
+		notices[message.Meta.WorkspaceID]++
+		offers[message.Meta.WorkspaceID] = message
 		return nil
+	}
+	checkOffer := func(task model.Task) {
+		t.Helper()
+		notification := offers[task.WorkspaceID]
+		want := model.ChannelMetadata{TaskID: task.ID, AssignmentID: task.AssignmentID, WorkspaceID: task.WorkspaceID}
+		if notification.Meta != want {
+			t.Fatalf("channel routing metadata=%+v want=%+v", notification.Meta, want)
+		}
+		if !strings.HasPrefix(notification.Content, "New task.") || !strings.HasSuffix(notification.Content, task.Prompt) {
+			t.Fatalf("channel content lost task instructions or prompt: %q", notification.Content)
+		}
 	}
 	f.b.AgentDisconnected(f.claude, f.connectionID)
 	if err = f.b.AgentConnected(f.ctx, f.claude, f.connectionID, notify); err != nil {
@@ -904,6 +916,7 @@ func TestSchedulingUsesExecutorReportedWorkspaceSubset(t *testing.T) {
 	if notices["workspace-1"] != 0 || notices["workspace-2"] != 1 {
 		t.Fatalf("incorrect channel offers for reported subset: %+v", notices)
 	}
+	checkOffer(f.task(second.ID))
 	f.b.DisconnectClient(f.peer)
 	f.peer, err = f.b.ConnectClient(f.ctx, f.executor, "journal-1", func(model.Envelope) error { return nil }, func() {}, "workspace-1", "workspace-2")
 	if err != nil {
@@ -916,6 +929,7 @@ func TestSchedulingUsesExecutorReportedWorkspaceSubset(t *testing.T) {
 	if notices["workspace-1"] != 1 {
 		t.Fatalf("newly reported workspace channel offers=%d", notices["workspace-1"])
 	}
+	checkOffer(f.task(first.ID))
 }
 
 func TestRunningTaskChecksCurrentExecutorWorkspaceConfiguration(t *testing.T) {

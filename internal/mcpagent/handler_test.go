@@ -26,7 +26,7 @@ type fakeService struct {
 	connected    chan string
 	disconnected chan string
 	calls        chan observedCall
-	notification map[string]any
+	notification *model.ChannelNotification
 	connectErr   error
 	call         func(context.Context, string, json.RawMessage) (any, error)
 	closers      sync.Map
@@ -43,13 +43,13 @@ func (s *fakeService) RegisterAgentCloser(id string, closePeer func()) {
 func newFake() *fakeService {
 	return &fakeService{connected: make(chan string, 4), disconnected: make(chan string, 4), calls: make(chan observedCall, 128)}
 }
-func (s *fakeService) AgentConnected(ctx context.Context, p model.Principal, cid string, notify func(context.Context, map[string]any) error) error {
+func (s *fakeService) AgentConnected(ctx context.Context, p model.Principal, cid string, notify model.ChannelNotifier) error {
 	s.connected <- cid
 	if s.connectErr != nil {
 		return s.connectErr
 	}
 	if s.notification != nil {
-		return notify(ctx, s.notification)
+		return notify(ctx, *s.notification)
 	}
 	return nil
 }
@@ -114,7 +114,10 @@ func initialize(t *testing.T, c *websocket.Conn) map[string]any {
 
 func TestInitializePinsProtocolAndChannelOnlyAfterInitialized(t *testing.T) {
 	s := newFake()
-	s.notification = map[string]any{"content": "Task offered", "meta": map[string]string{"task_id": "task-1", "assignment_id": "assignment-1"}}
+	s.notification = &model.ChannelNotification{
+		Content: "Task offered",
+		Meta:    model.ChannelMetadata{TaskID: "task-1", AssignmentID: "assignment-1", WorkspaceID: "workspace-b"},
+	}
 	server := testServer(t, s)
 	conn := dial(t, server)
 	if conn.Subprotocol() != "mcp" {
@@ -135,14 +138,7 @@ func TestInitializePinsProtocolAndChannelOnlyAfterInitialized(t *testing.T) {
 	default:
 	}
 	sendJSON(t, conn, map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized", "params": map[string]any{}})
-	notification := receiveJSON(t, conn)
-	if notification["method"] != channelMethod || notification["id"] != nil {
-		t.Fatalf("invalid notification: %v", notification)
-	}
-	params := notification["params"].(map[string]any)
-	if params["content"] != "Task offered" {
-		t.Fatalf("content=%v", params)
-	}
+	receiveChannelNotification(t, conn, *s.notification)
 	var cid string
 	select {
 	case cid = <-s.connected:
