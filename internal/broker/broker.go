@@ -143,7 +143,7 @@ func (b *Broker) AgentDisconnected(p model.Principal, id string) {
 				if e = tx.SaveTask(t); e != nil {
 					return e
 				}
-				if e = tx.Event(t.ID, "agent.disconnected", map[string]any{"state": t.State}); e != nil {
+				if e = tx.Event(t.ID, "agent.disconnected", model.TaskStatePayload{State: t.State}); e != nil {
 					return e
 				}
 			}
@@ -360,7 +360,7 @@ func (b *Broker) tick(ctx context.Context) {
 						if e = tx.SaveTask(*t); e != nil {
 							return e
 						}
-						if e = tx.Event(t.ID, "task.offered", map[string]any{"assignment_id": t.AssignmentID}); e != nil {
+						if e = tx.Event(t.ID, "task.offered", model.AssignmentPayload{AssignmentID: t.AssignmentID}); e != nil {
 							return e
 						}
 						busy[t.WorkspaceID] = true
@@ -557,14 +557,14 @@ func (b *Broker) authorized(t model.Task, p model.Principal, cid, assignment str
 	}
 	return nil
 }
-func snapshot(tx *storage.Tx, t model.Task) (any, error) {
+func snapshot(tx *storage.Tx, t model.Task) (model.TaskSnapshot, error) {
 	// The channel carries the complete prompt. Keep status responses bounded.
 	if len(t.Prompt) > 1024 {
 		t.Prompt = strings.ToValidUTF8(t.Prompt[:1024], "") + "…"
 	}
 	cs, e := tx.Commands(t.ID)
 	if e != nil {
-		return nil, e
+		return model.TaskSnapshot{}, e
 	}
 	more := len(cs) > 10
 	if more {
@@ -582,7 +582,7 @@ func snapshot(tx *storage.Tx, t model.Task) (any, error) {
 			cs[i].Command = cs[i].Command[:256] + "…"
 		}
 	}
-	return map[string]any{"task": t, "commands": cs, "commands_truncated": more}, nil
+	return model.TaskSnapshot{Task: t, Commands: cs, CommandsTruncated: more}, nil
 }
 func (b *Broker) CallAgent(ctx context.Context, p model.Principal, cid, method string, raw json.RawMessage) (any, error) {
 	if e := b.Check(ctx, p); e != nil {
@@ -596,6 +596,7 @@ func (b *Broker) CallAgent(ctx context.Context, p model.Principal, cid, method s
 		return nil, e
 	}
 	var out any
+	var dispatched model.Command
 	if method == "command_wait" {
 		if a.WaitMS == 0 {
 			a.WaitMS = 30000
@@ -626,7 +627,7 @@ func (b *Broker) CallAgent(ctx context.Context, p model.Principal, cid, method s
 				return e
 			}
 			out = t
-			return tx.Event(t.ID, "task.running", map[string]any{"assignment_id": t.AssignmentID})
+			return tx.Event(t.ID, "task.running", model.AssignmentPayload{AssignmentID: t.AssignmentID})
 		case "task_resume":
 			if t.State != "interrupted" || a.PreviousAssignmentID != t.AssignmentID || t.AgentID != p.AgentID {
 				return model.Err("invalid_state", "matching interrupted assignment required")
@@ -663,7 +664,7 @@ func (b *Broker) CallAgent(ctx context.Context, p model.Principal, cid, method s
 				return e
 			}
 			out = t
-			return tx.Event(t.ID, "task.resumed", map[string]any{"assignment_id": t.AssignmentID})
+			return tx.Event(t.ID, "task.resumed", model.AssignmentPayload{AssignmentID: t.AssignmentID})
 		case "bash":
 			if e = b.authorized(t, p, cid, a.AssignmentID); e != nil {
 				return e
@@ -683,7 +684,7 @@ func (b *Broker) CallAgent(ctx context.Context, p model.Principal, cid, method s
 				if c.RequestHash != h {
 					return model.Err("idempotency_conflict", "operation_key reused with different command")
 				}
-				out = c
+				dispatched = c
 				return nil
 			}
 			if !errors.Is(err, sql.ErrNoRows) {
@@ -716,8 +717,8 @@ func (b *Broker) CallAgent(ctx context.Context, p model.Principal, cid, method s
 			if e = tx.Enqueue(t.ExecutorID, "command.dispatch", model.Dispatch{WorkspaceID: t.WorkspaceID, Command: c}); e != nil {
 				return e
 			}
-			out = c
-			return tx.Event(t.ID, "command.dispatched", map[string]any{"command_id": c.ID})
+			dispatched = c
+			return tx.Event(t.ID, "command.dispatched", model.CommandIDPayload{CommandID: c.ID})
 		case "task_progress":
 			if e = b.authorized(t, p, cid, a.AssignmentID); e != nil {
 				return e
@@ -730,7 +731,7 @@ func (b *Broker) CallAgent(ctx context.Context, p model.Principal, cid, method s
 				return e
 			}
 			out = t
-			return tx.Event(t.ID, "task.progress", map[string]any{"message": a.Message})
+			return tx.Event(t.ID, "task.progress", model.TaskProgressPayload{Message: a.Message})
 		case "task_complete":
 			if t.Terminal() {
 				if t.State == a.Outcome && t.Summary == a.Summary && string(canonicalResult(t.Result)) == string(canonicalResult(a.Result)) {
@@ -761,7 +762,7 @@ func (b *Broker) CallAgent(ctx context.Context, p model.Principal, cid, method s
 				return e
 			}
 			out = t
-			return tx.Event(t.ID, "task.completed", map[string]any{"state": t.State, "summary": t.Summary})
+			return tx.Event(t.ID, "task.completed", model.TaskCompletedPayload{State: t.State, Summary: t.Summary})
 		case "command_get", "command_output", "command_cancel":
 			c, e := tx.Command(a.CommandID)
 			if e != nil {
@@ -800,8 +801,7 @@ func (b *Broker) CallAgent(ctx context.Context, p model.Principal, cid, method s
 		return nil, e
 	}
 	if method == "bash" {
-		c := out.(model.Command)
-		a.CommandID = c.ID
+		a.CommandID = dispatched.ID
 		if a.WaitMS == 0 {
 			a.WaitMS = 30000
 		}
@@ -829,15 +829,15 @@ func (b *Broker) CallClient(ctx context.Context, c *ClientPeer, method string, r
 		a.WaitMS = min(a.WaitMS, 60000)
 		return b.waitTask(ctx, p, a)
 	}
-	if method == "tasks_run" {
-		wait := a.WaitMS
-		a.WaitMS = 0
-		out, e := b.CallClient(ctx, c, "tasks_submit", model.JSON(a))
+	if method == "tasks_submit" || method == "tasks_run" {
+		task, e := b.submitTask(ctx, c, a)
 		if e != nil {
 			return nil, e
 		}
-		a.TaskID = out.(model.Task).ID
-		a.WaitMS = wait
+		if method == "tasks_submit" {
+			return task, nil
+		}
+		a.TaskID = task.ID
 		if a.WaitMS == 0 {
 			a.WaitMS = 25000
 		}
@@ -853,57 +853,6 @@ func (b *Broker) CallClient(ctx context.Context, c *ClientPeer, method string, r
 			return model.Err("stale_connection", "executor connection replaced")
 		}
 		switch method {
-		case "tasks_submit":
-			if b.draining {
-				return model.Err("draining", "server is draining")
-			}
-			if !bounded(a.Prompt, 8192) || !bounded(a.IdempotencyKey, 200) {
-				return model.Err("invalid_arguments", "bounded prompt and idempotency_key required")
-			}
-			w, e := tx.Workspace(a.WorkspaceID)
-			if e != nil {
-				return e
-			}
-			if w.ExecutorID != p.ExecutorID || (p.WorkspaceID != "" && p.WorkspaceID != w.ID) {
-				return model.Err("forbidden", "workspace outside executor scope")
-			}
-			if w.Quarantined {
-				return model.Err("workspace_quarantined", w.QuarantineReason)
-			}
-			if a.DeadlineMS == 0 {
-				a.DeadlineMS = 1800000
-			}
-			if a.DeadlineMS < 1000 || a.DeadlineMS > 86400000 {
-				return model.Err("invalid_arguments", "deadline_ms must be between 1000 and 86400000")
-			}
-			h := storage.Hash(string(model.JSON([]any{a.WorkspaceID, a.Prompt, a.DeadlineMS})))
-			t, e := tx.TaskByKey(p.ID, a.IdempotencyKey)
-			if e == nil {
-				if t.RequestHash != h {
-					return model.Err("idempotency_conflict", "submission key reused with different content")
-				}
-				out = t
-				return nil
-			}
-			if !errors.Is(e, sql.ErrNoRows) {
-				return e
-			}
-			if e = b.Store.AdmissionIn(tx); e != nil {
-				return e
-			}
-			var n int
-			if e = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM tasks WHERE state='queued'").Scan(&n); e != nil {
-				return e
-			}
-			if n >= b.MaxQueued {
-				return model.Err("queue_full", "task queue is full")
-			}
-			t = model.Task{ID: uuid.NewString(), RequesterID: p.ID, WorkspaceID: w.ID, ExecutorID: w.ExecutorID, Prompt: a.Prompt, State: "queued", IdempotencyKey: a.IdempotencyKey, RequestHash: h, DeadlineAt: model.Now() + a.DeadlineMS, CreatedAt: model.Now()}
-			if e = tx.SaveTask(t); e != nil {
-				return e
-			}
-			out = t
-			return tx.Event(t.ID, "task.submitted", map[string]any{"state": "queued"})
 		case "tasks_list":
 			limit := a.Limit
 			if limit == 0 {
@@ -930,7 +879,7 @@ func (b *Broker) CallClient(ctx context.Context, c *ClientPeer, method string, r
 				items[i].Progress = ""
 				items[i].CancelReason = ""
 			}
-			out = map[string]any{"tasks": items, "cursor": cursor}
+			out = model.TaskListResult{Tasks: items, Cursor: cursor}
 			return nil
 		case "command_authorize":
 			cmd, e := tx.Command(a.CommandID)
@@ -945,7 +894,7 @@ func (b *Broker) CallClient(ctx context.Context, c *ClientPeer, method string, r
 			if slot := b.agents[t.AgentID]; slot == nil || slot.id != t.ConnectionID {
 				allowed = false
 			}
-			out = map[string]bool{"allowed": allowed}
+			out = model.CommandAuthorization{Allowed: allowed}
 			return nil
 		case "tasks_get", "tasks_cancel", "tasks_events":
 			t, e := getTask(tx, p, a.TaskID)
@@ -980,6 +929,71 @@ func (b *Broker) CallClient(ctx context.Context, c *ClientPeer, method string, r
 	})
 	return out, e
 }
+
+func (b *Broker) submitTask(ctx context.Context, c *ClientPeer, a Args) (model.Task, error) {
+	p := c.Principal
+	var task model.Task
+	err := b.update(ctx, func(tx *storage.Tx) error {
+		if e := activePrincipal(tx, p); e != nil {
+			return e
+		}
+		if !b.liveClient(c) {
+			return model.Err("stale_connection", "executor connection replaced")
+		}
+		if b.draining {
+			return model.Err("draining", "server is draining")
+		}
+		if !bounded(a.Prompt, 8192) || !bounded(a.IdempotencyKey, 200) {
+			return model.Err("invalid_arguments", "bounded prompt and idempotency_key required")
+		}
+		w, e := tx.Workspace(a.WorkspaceID)
+		if e != nil {
+			return e
+		}
+		if w.ExecutorID != p.ExecutorID || (p.WorkspaceID != "" && p.WorkspaceID != w.ID) {
+			return model.Err("forbidden", "workspace outside executor scope")
+		}
+		if w.Quarantined {
+			return model.Err("workspace_quarantined", w.QuarantineReason)
+		}
+		if a.DeadlineMS == 0 {
+			a.DeadlineMS = 1800000
+		}
+		if a.DeadlineMS < 1000 || a.DeadlineMS > 86400000 {
+			return model.Err("invalid_arguments", "deadline_ms must be between 1000 and 86400000")
+		}
+		h := storage.Hash(string(model.JSON([]any{a.WorkspaceID, a.Prompt, a.DeadlineMS})))
+		t, e := tx.TaskByKey(p.ID, a.IdempotencyKey)
+		if e == nil {
+			if t.RequestHash != h {
+				return model.Err("idempotency_conflict", "submission key reused with different content")
+			}
+			task = t
+			return nil
+		}
+		if !errors.Is(e, sql.ErrNoRows) {
+			return e
+		}
+		if e = b.Store.AdmissionIn(tx); e != nil {
+			return e
+		}
+		var n int
+		if e = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM tasks WHERE state='queued'").Scan(&n); e != nil {
+			return e
+		}
+		if n >= b.MaxQueued {
+			return model.Err("queue_full", "task queue is full")
+		}
+		t = model.Task{ID: uuid.NewString(), RequesterID: p.ID, WorkspaceID: w.ID, ExecutorID: w.ExecutorID, Prompt: a.Prompt, State: "queued", IdempotencyKey: a.IdempotencyKey, RequestHash: h, DeadlineAt: model.Now() + a.DeadlineMS, CreatedAt: model.Now()}
+		if e = tx.SaveTask(t); e != nil {
+			return e
+		}
+		task = t
+		return tx.Event(t.ID, "task.submitted", model.TaskStatePayload{State: "queued"})
+	})
+	return task, err
+}
+
 func (b *Broker) cancelTask(tx *storage.Tx, t *model.Task, reason string) error {
 	t.CancelReason = reason
 	if t.CancelReason == "" {
@@ -1008,7 +1022,7 @@ func (b *Broker) cancelTask(tx *storage.Tx, t *model.Task, reason string) error 
 	if e = tx.SaveTask(*t); e != nil {
 		return e
 	}
-	return tx.Event(t.ID, "task.cancel_requested", map[string]any{"reason": t.CancelReason, "state": t.State})
+	return tx.Event(t.ID, "task.cancel_requested", model.TaskCancelRequestedPayload{Reason: t.CancelReason, State: t.State})
 }
 func (b *Broker) finalizeCancel(tx *storage.Tx, t *model.Task) error {
 	cs, e := tx.Commands(t.ID)
@@ -1027,11 +1041,11 @@ func (b *Broker) finalizeCancel(tx *storage.Tx, t *model.Task) error {
 	return tx.SaveTask(*t)
 }
 
-func (b *Broker) waitTask(ctx context.Context, p model.Principal, a Args) (any, error) {
+func (b *Broker) waitTask(ctx context.Context, p model.Principal, a Args) (model.TaskWaitResult, error) {
 	deadline := time.Now().Add(time.Duration(a.WaitMS) * time.Millisecond)
 	for {
 		var t model.Task
-		var result any
+		var result model.TaskSnapshot
 		e := b.Store.View(ctx, func(tx *storage.Tx) error {
 			var e error
 			t, e = getTask(tx, p, a.TaskID)
@@ -1042,25 +1056,25 @@ func (b *Broker) waitTask(ctx context.Context, p model.Principal, a Args) (any, 
 			return e
 		})
 		if e != nil {
-			return nil, normalize(e)
+			return model.TaskWaitResult{}, normalize(e)
 		}
 		if t.Terminal() || !time.Now().Before(deadline) {
-			return map[string]any{"pending": !t.Terminal(), "task_id": t.ID, "snapshot": result}, nil
+			return model.TaskWaitResult{Pending: !t.Terminal(), TaskID: t.ID, Snapshot: result}, nil
 		}
 		timer := time.NewTimer(min(time.Until(deadline), 100*time.Millisecond))
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return nil, ctx.Err()
+			return model.TaskWaitResult{}, ctx.Err()
 		case <-timer.C:
 		}
 	}
 }
-func (b *Broker) waitCommand(ctx context.Context, p model.Principal, a Args) (any, error) {
+func (b *Broker) waitCommand(ctx context.Context, p model.Principal, a Args) (model.CommandResult, error) {
 	deadline := time.Now().Add(time.Duration(a.WaitMS) * time.Millisecond)
 	for {
 		var c model.Command
-		var out any
+		var out model.CommandResult
 		e := b.Store.View(ctx, func(tx *storage.Tx) error {
 			t, e := getTask(tx, p, a.TaskID)
 			if e != nil {
@@ -1077,7 +1091,7 @@ func (b *Broker) waitCommand(ctx context.Context, p model.Principal, a Args) (an
 			return e
 		})
 		if e != nil {
-			return nil, normalize(e)
+			return model.CommandResult{}, normalize(e)
 		}
 		if c.Terminal() || !time.Now().Before(deadline) {
 			return out, nil
@@ -1086,18 +1100,17 @@ func (b *Broker) waitCommand(ctx context.Context, p model.Principal, a Args) (an
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return nil, ctx.Err()
+			return model.CommandResult{}, ctx.Err()
 		case <-timer.C:
 		}
 	}
 }
 
-func commandResult(tx *storage.Tx, c model.Command) (any, error) {
+func commandResult(tx *storage.Tx, c model.Command) (model.CommandResult, error) {
 	o, e := output(tx, c, 0, model.MaxOutputPage)
 	if e != nil {
-		return nil, e
+		return model.CommandResult{}, e
 	}
-	m := o.(map[string]any)
 	c.RequestedCwd = ""
 	if len(c.Cwd) > 1024 {
 		c.Cwd = strings.ToValidUTF8(c.Cwd[:1024], "") + "…"
@@ -1105,29 +1118,27 @@ func commandResult(tx *storage.Tx, c model.Command) (any, error) {
 	if len(c.Command) > 256 {
 		c.Command = strings.ToValidUTF8(c.Command[:256], "") + "…"
 	}
-	m["command"] = c
-	m["pending"] = !c.Terminal()
-	return m, nil
+	return model.CommandResult{OutputResult: o, Command: c, Pending: !c.Terminal()}, nil
 }
 
 // Output uses a byte cursor. Bounded raw base64 fragments preserve arbitrary
 // bytes, including a UTF-8 sequence split at a page boundary. Display strings
 // are returned only when their combined bytes form complete UTF-8.
-func output(tx *storage.Tx, c model.Command, cursor int64, limit int) (any, error) {
+func output(tx *storage.Tx, c model.Command, cursor int64, limit int) (model.OutputResult, error) {
 	if limit == 0 {
 		limit = model.MaxOutputPage
 	}
 	if limit < 1 || limit > model.MaxOutputPage {
-		return nil, model.Err("invalid_arguments", "output limit must be 1..16384")
+		return model.OutputResult{}, model.Err("invalid_arguments", "output limit must be 1..16384")
 	}
 	// Reserve room for base64, display text, tool metadata and JSON wrapping.
 	limit = min(limit, 8<<10)
 	chunks, offsets, e := tx.BytePage(c.ID, cursor)
 	if e != nil {
-		return nil, e
+		return model.OutputResult{}, e
 	}
 	stdout, stderr := []byte{}, []byte{}
-	raw := []map[string]any{}
+	raw := []model.OutputChunk{}
 	remaining := limit
 	var next int64 = cursor
 	for i, ch := range chunks {
@@ -1145,7 +1156,7 @@ func output(tx *storage.Tx, c model.Command, cursor int64, limit int) (any, erro
 			break
 		}
 		part := ch.Data[start : start+n]
-		raw = append(raw, map[string]any{"chunk_seq": ch.Seq, "stream": ch.Stream, "offset": offset + start, "data": part})
+		raw = append(raw, model.OutputChunk{Seq: ch.Seq, Stream: ch.Stream, Offset: offset + start, Data: part})
 		if ch.Stream == "stdout" {
 			stdout = append(stdout, part...)
 		} else {
@@ -1157,16 +1168,14 @@ func output(tx *storage.Tx, c model.Command, cursor int64, limit int) (any, erro
 			break
 		}
 	}
-	display := map[string]string{}
-	omitted := false
-	for stream, data := range map[string][]byte{"stdout": stdout, "stderr": stderr} {
-		encoded := model.JSON(string(data))
-		if utf8.Valid(data) && len(encoded) <= 8192 {
-			display[stream] = string(data)
-		} else {
-			display[stream] = ""
-			omitted = true
-		}
+	stdoutText, stdoutOmitted := displayOutput(stdout)
+	stderrText, stderrOmitted := displayOutput(stderr)
+	return model.OutputResult{CommandID: c.ID, Stdout: stdoutText, Stderr: stderrText, Chunks: raw, TextOmitted: stdoutOmitted || stderrOmitted, Cursor: next, HasMore: next < c.OutputBytes, Truncated: c.Truncated, DroppedBytes: c.DroppedBytes}, nil
+}
+
+func displayOutput(data []byte) (string, bool) {
+	if utf8.Valid(data) && len(model.JSON(string(data))) <= 8192 {
+		return string(data), false
 	}
-	return map[string]any{"command_id": c.ID, "stdout": display["stdout"], "stderr": display["stderr"], "chunks": raw, "text_omitted": omitted, "cursor": next, "has_more": next < c.OutputBytes, "truncated": c.Truncated, "dropped_bytes": c.DroppedBytes}, nil
+	return "", true
 }

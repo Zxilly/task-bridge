@@ -58,7 +58,7 @@ func newFixture(t *testing.T) *brokerFixture {
 }
 func (f *brokerFixture) submit(key, prompt string) model.Task {
 	f.t.Helper()
-	value, err := f.b.CallClient(f.ctx, f.peer, "tasks_submit", model.JSON(map[string]any{"workspace_id": "workspace-1", "idempotency_key": key, "prompt": prompt}))
+	value, err := f.b.CallClient(f.ctx, f.peer, "tasks_submit", model.JSON(Args{WorkspaceID: "workspace-1", IdempotencyKey: key, Prompt: prompt}))
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -99,18 +99,18 @@ func (f *brokerFixture) running(key string) model.Task {
 	if task.State != "offered" {
 		f.t.Fatalf("task state=%s", task.State)
 	}
-	if _, err := f.agent("task_accept", map[string]any{"task_id": task.ID, "assignment_id": task.AssignmentID}); err != nil {
+	if _, err := f.agent("task_accept", Args{TaskID: task.ID, AssignmentID: task.AssignmentID}); err != nil {
 		f.t.Fatal(err)
 	}
 	return f.task(task.ID)
 }
 func (f *brokerFixture) bash(task model.Task, key, command string) model.Command {
 	f.t.Helper()
-	value, err := f.agent("bash", map[string]any{"task_id": task.ID, "assignment_id": task.AssignmentID, "operation_key": key, "command": command, "wait_ms": 1})
+	value, err := f.agent("bash", Args{TaskID: task.ID, AssignmentID: task.AssignmentID, OperationKey: key, Command: command, WaitMS: 1})
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	return value.(map[string]any)["command"].(model.Command)
+	return value.(model.CommandResult).Command
 }
 func (f *brokerFixture) event(typ string, event model.CommandEvent) model.Envelope {
 	return model.Envelope{Version: 1, Type: typ, ID: uuid.NewString(), ServerEpoch: f.store.Epoch, Generation: f.peer.Generation, StreamID: f.peer.Stream, Payload: model.JSON(event)}
@@ -136,11 +136,11 @@ func TestTaskAndCommandIdempotency(t *testing.T) {
 	if again.ID != first.ID {
 		t.Fatal("submission retry created a new task")
 	}
-	_, err := f.b.CallClient(f.ctx, f.peer, "tasks_submit", model.JSON(map[string]any{"workspace_id": "workspace-1", "idempotency_key": "task-key", "prompt": "different prompt"}))
+	_, err := f.b.CallClient(f.ctx, f.peer, "tasks_submit", model.JSON(Args{WorkspaceID: "workspace-1", IdempotencyKey: "task-key", Prompt: "different prompt"}))
 	requireCode(t, err, "idempotency_conflict")
 	f.b.tick(f.ctx)
 	task := f.task(first.ID)
-	if _, err = f.agent("task_accept", map[string]any{"task_id": task.ID, "assignment_id": task.AssignmentID}); err != nil {
+	if _, err = f.agent("task_accept", Args{TaskID: task.ID, AssignmentID: task.AssignmentID}); err != nil {
 		t.Fatal(err)
 	}
 	command := f.bash(task, "operation-key", "printf once")
@@ -148,7 +148,7 @@ func TestTaskAndCommandIdempotency(t *testing.T) {
 	if againCommand.ID != command.ID {
 		t.Fatal("command retry created another command")
 	}
-	_, err = f.agent("bash", map[string]any{"task_id": task.ID, "assignment_id": task.AssignmentID, "operation_key": "operation-key", "command": "printf twice", "wait_ms": 1})
+	_, err = f.agent("bash", Args{TaskID: task.ID, AssignmentID: task.AssignmentID, OperationKey: "operation-key", Command: "printf twice", WaitMS: 1})
 	requireCode(t, err, "idempotency_conflict")
 	if err = f.store.View(f.ctx, func(tx *storage.Tx) error {
 		commands, err := tx.Commands(task.ID)
@@ -180,11 +180,11 @@ func TestDisconnectRequiresExplicitResumeAndFencesOldAssignment(t *testing.T) {
 	if err := f.b.AgentConnected(f.ctx, f.claude, f.connectionID, func(context.Context, model.ChannelNotification) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
-	_, err := f.agent("task_accept", map[string]any{"task_id": task.ID, "assignment_id": task.AssignmentID})
+	_, err := f.agent("task_accept", Args{TaskID: task.ID, AssignmentID: task.AssignmentID})
 	requireCode(t, err, "stale_assignment")
-	_, err = f.agent("bash", map[string]any{"task_id": task.ID, "assignment_id": task.AssignmentID, "operation_key": "before-resume", "command": "true", "wait_ms": 1})
+	_, err = f.agent("bash", Args{TaskID: task.ID, AssignmentID: task.AssignmentID, OperationKey: "before-resume", Command: "true", WaitMS: 1})
 	requireCode(t, err, "stale_assignment")
-	resumed, err := f.agent("task_resume", map[string]any{"task_id": task.ID, "previous_assignment_id": task.AssignmentID})
+	resumed, err := f.agent("task_resume", Args{TaskID: task.ID, PreviousAssignmentID: task.AssignmentID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestDisconnectRequiresExplicitResumeAndFencesOldAssignment(t *testing.T) {
 	if newTask.AssignmentID == task.AssignmentID || newTask.LeaseEpoch != task.LeaseEpoch+1 || newTask.ConnectionID != f.connectionID {
 		t.Fatalf("resume failed to fence old assignment: %+v", newTask)
 	}
-	_, err = f.agent("bash", map[string]any{"task_id": task.ID, "assignment_id": task.AssignmentID, "operation_key": "after-resume-old", "command": "true", "wait_ms": 1})
+	_, err = f.agent("bash", Args{TaskID: task.ID, AssignmentID: task.AssignmentID, OperationKey: "after-resume-old", Command: "true", WaitMS: 1})
 	requireCode(t, err, "stale_assignment")
 	f.bash(newTask, "after-resume-new", "true")
 	if err = f.b.CreateWorkspace(f.ctx, model.Workspace{ID: "workspace-2", ExecutorID: "executor-2"}); err != nil {
@@ -202,7 +202,7 @@ func TestDisconnectRequiresExplicitResumeAndFencesOldAssignment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = f.b.CallAgent(f.ctx, other, "other-connection", "task_get", model.JSON(map[string]any{"task_id": task.ID}))
+	_, err = f.b.CallAgent(f.ctx, other, "other-connection", "task_get", model.JSON(Args{TaskID: task.ID}))
 	requireCode(t, err, "forbidden")
 }
 
@@ -214,25 +214,25 @@ func TestUnknownRequiresAuditedResolutionAndWorkspaceRelease(t *testing.T) {
 	if f.task(task.ID).State != "interrupted" || !f.workspace().Quarantined {
 		t.Fatal("unknown result failed to interrupt and quarantine")
 	}
-	_, err := f.agent("task_resume", map[string]any{"task_id": task.ID, "previous_assignment_id": task.AssignmentID})
+	_, err := f.agent("task_resume", Args{TaskID: task.ID, PreviousAssignmentID: task.AssignmentID})
 	requireCode(t, err, "reconciliation_required")
-	_, err = f.b.Admin(f.ctx, "workspaces.release", model.JSON(map[string]any{"id": "workspace-1", "reason": "checked"}))
+	_, err = f.b.Admin(f.ctx, "workspaces.release", model.JSON(model.AdminArgs{ID: "workspace-1", Reason: "checked"}))
 	requireCode(t, err, "reconciliation_required")
-	if _, err = f.b.Admin(f.ctx, "commands.resolve", model.JSON(map[string]any{"id": command.ID, "outcome": "stopped", "reason": "verified process and descendants stopped"})); err != nil {
+	if _, err = f.b.Admin(f.ctx, "commands.resolve", model.JSON(model.AdminArgs{ID: command.ID, Outcome: "stopped", Reason: "verified process and descendants stopped"})); err != nil {
 		t.Fatal(err)
 	}
 	if f.command(command.ID).State != "cancelled" || !f.workspace().Quarantined {
 		t.Fatal("resolution must not implicitly release workspace")
 	}
-	if _, err = f.b.Admin(f.ctx, "workspaces.release", model.JSON(map[string]any{"id": "workspace-1", "reason": "verified no live processes"})); err != nil {
+	if _, err = f.b.Admin(f.ctx, "workspaces.release", model.JSON(model.AdminArgs{ID: "workspace-1", Reason: "verified no live processes"})); err != nil {
 		t.Fatal(err)
 	}
-	resumed, err := f.agent("task_resume", map[string]any{"task_id": task.ID, "previous_assignment_id": task.AssignmentID})
+	resumed, err := f.agent("task_resume", Args{TaskID: task.ID, PreviousAssignmentID: task.AssignmentID})
 	if err != nil {
 		t.Fatal(err)
 	}
 	newTask := resumed.(model.Task)
-	if _, err = f.agent("task_complete", map[string]any{"task_id": task.ID, "assignment_id": newTask.AssignmentID, "outcome": "failed", "summary": "execution was stopped and reconciled"}); err != nil {
+	if _, err = f.agent("task_complete", Args{TaskID: task.ID, AssignmentID: newTask.AssignmentID, Outcome: "failed", Summary: "execution was stopped and reconciled"}); err != nil {
 		t.Fatal(err)
 	}
 	if f.task(task.ID).State != "failed" {
@@ -245,19 +245,19 @@ func TestAbandonPreservesUnknownAndBlocksWorkspaceUntilResolved(t *testing.T) {
 	task := f.running("abandon")
 	command := f.bash(task, "op", "true")
 	f.finish(command, "unknown")
-	if _, err := f.b.Admin(f.ctx, "tasks.abandon", model.JSON(map[string]any{"id": task.ID, "reason": "owner abandoned uncertain task"})); err != nil {
+	if _, err := f.b.Admin(f.ctx, "tasks.abandon", model.JSON(model.AdminArgs{ID: task.ID, Reason: "owner abandoned uncertain task"})); err != nil {
 		t.Fatal(err)
 	}
 	abandoned := f.task(task.ID)
 	if abandoned.State != "abandoned" || !abandoned.Unresolved || f.command(command.ID).State != "unknown" || !f.workspace().Quarantined {
 		t.Fatalf("abandon discarded uncertainty: %+v", abandoned)
 	}
-	_, err := f.b.CallClient(f.ctx, f.peer, "tasks_submit", model.JSON(map[string]any{"workspace_id": "workspace-1", "idempotency_key": "blocked", "prompt": "next task"}))
+	_, err := f.b.CallClient(f.ctx, f.peer, "tasks_submit", model.JSON(Args{WorkspaceID: "workspace-1", IdempotencyKey: "blocked", Prompt: "next task"}))
 	requireCode(t, err, "workspace_quarantined")
-	if _, err = f.b.Admin(f.ctx, "commands.resolve", model.JSON(map[string]any{"id": command.ID, "outcome": "not_started", "reason": "audited journal confirms no process was launched"})); err != nil {
+	if _, err = f.b.Admin(f.ctx, "commands.resolve", model.JSON(model.AdminArgs{ID: command.ID, Outcome: "not_started", Reason: "audited journal confirms no process was launched"})); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = f.b.Admin(f.ctx, "workspaces.release", model.JSON(map[string]any{"id": "workspace-1", "reason": "verified no old process can execute"})); err != nil {
+	if _, err = f.b.Admin(f.ctx, "workspaces.release", model.JSON(model.AdminArgs{ID: "workspace-1", Reason: "verified no old process can execute"})); err != nil {
 		t.Fatal(err)
 	}
 	if f.workspace().Quarantined {
@@ -296,14 +296,14 @@ func TestDeadlineCancelsCommandBeforeTaskBecomesTimedOut(t *testing.T) {
 func TestDuplicateTaskCompletionRejectsConflictingResult(t *testing.T) {
 	f := newFixture(t)
 	task := f.running("complete")
-	args := map[string]any{"task_id": task.ID, "assignment_id": task.AssignmentID, "outcome": "succeeded", "summary": "done", "result": map[string]any{"value": 1}}
+	args := Args{TaskID: task.ID, AssignmentID: task.AssignmentID, Outcome: "succeeded", Summary: "done", Result: json.RawMessage(`{"value":1}`)}
 	if _, err := f.agent("task_complete", args); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.agent("task_complete", args); err != nil {
 		t.Fatalf("identical final retry failed: %v", err)
 	}
-	args["result"] = map[string]any{"value": 2}
+	args.Result = json.RawMessage(`{"value":2}`)
 	_, err := f.agent("task_complete", args)
 	requireCode(t, err, "result_conflict")
 	var final map[string]int
@@ -371,7 +371,7 @@ func TestExecutorJournalBindingSurvivesBrokerRecreation(t *testing.T) {
 func TestExecutorJournalResetRequiresStoppedExecutionAndRotatesCredential(t *testing.T) {
 	f := newFixture(t)
 	reset := func(reason string) error {
-		_, err := f.b.Admin(f.ctx, "executors.reset_journal", model.JSON(map[string]any{"id": f.executor.ExecutorID, "reason": reason}))
+		_, err := f.b.Admin(f.ctx, "executors.reset_journal", model.JSON(model.AdminArgs{ID: f.executor.ExecutorID, Reason: reason}))
 		return err
 	}
 	requireCode(t, reset(""), "invalid_arguments")
@@ -388,7 +388,7 @@ func TestExecutorJournalResetRequiresStoppedExecutionAndRotatesCredential(t *tes
 	f.finish(command, "unknown")
 	f.b.DisconnectClient(f.peer)
 	requireCode(t, reset("unknown outcome is unresolved"), "reconciliation_required")
-	if _, err = f.b.Admin(f.ctx, "commands.resolve", model.JSON(map[string]any{"id": command.ID, "outcome": "stopped", "reason": "verified process and descendants stopped"})); err != nil {
+	if _, err = f.b.Admin(f.ctx, "commands.resolve", model.JSON(model.AdminArgs{ID: command.ID, Outcome: "stopped", Reason: "verified process and descendants stopped"})); err != nil {
 		t.Fatal(err)
 	}
 	const reason = "all executor processes and descendants verified stopped; journal replaced"
@@ -446,7 +446,7 @@ func TestExactOutboxAckAndGenerationFencing(t *testing.T) {
 	f := newFixture(t)
 	task := f.running("ack")
 	command := f.bash(task, "op", "true")
-	if _, err := f.agent("command_cancel", map[string]any{"task_id": task.ID, "command_id": command.ID}); err != nil {
+	if _, err := f.agent("command_cancel", Args{TaskID: task.ID, CommandID: command.ID}); err != nil {
 		t.Fatal(err)
 	}
 	var messages []model.Envelope
@@ -515,13 +515,13 @@ func TestBrokerRecoveryRequiresExplicitResume(t *testing.T) {
 	if got := f.task(task.ID); got.State != "interrupted" || got.LeaseUntil != 0 {
 		t.Fatalf("recover did not revoke lease: %+v", got)
 	}
-	_, err := f.agent("task_resume", map[string]any{"task_id": task.ID, "previous_assignment_id": task.AssignmentID})
+	_, err := f.agent("task_resume", Args{TaskID: task.ID, PreviousAssignmentID: task.AssignmentID})
 	requireCode(t, err, "executor_unavailable")
 	f.peer, err = f.b.ConnectClient(f.ctx, f.executor, "journal-1", func(model.Envelope) error { return nil }, func() {})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = f.agent("task_resume", map[string]any{"task_id": task.ID, "previous_assignment_id": task.AssignmentID}); err != nil {
+	if _, err = f.agent("task_resume", Args{TaskID: task.ID, PreviousAssignmentID: task.AssignmentID}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -575,7 +575,7 @@ func TestOutputBytePagesPreserveSplitUTF8AndReadBeyond4096Chunks(t *testing.T) {
 	}
 	read := func(cursor int64, limit int) page {
 		t.Helper()
-		var result any
+		var result model.OutputResult
 		if err := f.store.View(f.ctx, func(tx *storage.Tx) error {
 			var err error
 			result, err = output(tx, command, cursor, limit)
@@ -648,7 +648,7 @@ func TestAbandonMissingExecutorPreservesUncertaintyAndCanBeReconciled(t *testing
 	task := f.running("missing-executor")
 	command := f.bash(task, "op", "true")
 	f.b.DisconnectClient(f.peer)
-	if _, err := f.b.Admin(f.ctx, "tasks.abandon", model.JSON(map[string]any{"id": task.ID, "reason": "executor was permanently lost"})); err != nil {
+	if _, err := f.b.Admin(f.ctx, "tasks.abandon", model.JSON(model.AdminArgs{ID: task.ID, Reason: "executor was permanently lost"})); err != nil {
 		t.Fatal(err)
 	}
 	if got := f.command(command.ID); got.State != "unknown" {
@@ -669,10 +669,10 @@ func TestAbandonMissingExecutorPreservesUncertaintyAndCanBeReconciled(t *testing
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.b.Admin(f.ctx, "commands.resolve", model.JSON(map[string]any{"id": command.ID, "outcome": "stopped", "reason": "operator verified machine powered off and disk retired"})); err != nil {
+	if _, err := f.b.Admin(f.ctx, "commands.resolve", model.JSON(model.AdminArgs{ID: command.ID, Outcome: "stopped", Reason: "operator verified machine powered off and disk retired"})); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.b.Admin(f.ctx, "workspaces.release", model.JSON(map[string]any{"id": "workspace-1", "reason": "no previous execution can resume"})); err != nil {
+	if _, err := f.b.Admin(f.ctx, "workspaces.release", model.JSON(model.AdminArgs{ID: "workspace-1", Reason: "no previous execution can resume"})); err != nil {
 		t.Fatal(err)
 	}
 	if f.workspace().Quarantined {
@@ -713,9 +713,9 @@ func TestStorageAdmissionPreservesRetriesAndTerminalEvidence(t *testing.T) {
 	if got := f.bash(task, "existing-op", "true"); got.ID != command.ID {
 		t.Fatal("capacity caused command retry to create a new record")
 	}
-	_, err := f.b.CallClient(f.ctx, f.peer, "tasks_submit", model.JSON(map[string]any{"workspace_id": "workspace-1", "prompt": "new work", "idempotency_key": "rejected-new"}))
+	_, err := f.b.CallClient(f.ctx, f.peer, "tasks_submit", model.JSON(Args{WorkspaceID: "workspace-1", Prompt: "new work", IdempotencyKey: "rejected-new"}))
 	requireCode(t, err, "storage_full")
-	_, err = f.agent("bash", map[string]any{"task_id": task.ID, "assignment_id": task.AssignmentID, "operation_key": "new-op", "command": "true", "wait_ms": 1})
+	_, err = f.agent("bash", Args{TaskID: task.ID, AssignmentID: task.AssignmentID, OperationKey: "new-op", Command: "true", WaitMS: 1})
 	requireCode(t, err, "storage_full")
 	chunk := model.CommandEvent{CommandID: command.ID, Chunk: &model.Chunk{CommandID: command.ID, Seq: 1, Stream: "stdout", Data: []byte("dropped output")}}
 	if err = f.b.ClientEvent(f.ctx, f.peer, f.event("command.output", chunk)); err != nil {
@@ -733,7 +733,7 @@ func TestStorageAdmissionPreservesRetriesAndTerminalEvidence(t *testing.T) {
 	if got.State != "exited" || got.ExitCode == nil || *got.ExitCode != 0 {
 		t.Fatalf("capacity lost terminal result: %+v", got)
 	}
-	if _, err = f.agent("task_complete", map[string]any{"task_id": task.ID, "assignment_id": task.AssignmentID, "outcome": "succeeded", "summary": "command completed with output truncated"}); err != nil {
+	if _, err = f.agent("task_complete", Args{TaskID: task.ID, AssignmentID: task.AssignmentID, Outcome: "succeeded", Summary: "command completed with output truncated"}); err != nil {
 		t.Fatalf("capacity blocked task completion: %v", err)
 	}
 }
@@ -753,7 +753,7 @@ func TestExecutorReconciliationMatchesEvidenceAndQuarantinesOrphans(t *testing.T
 	record.FinishedAt = model.Now()
 	record.DurationMS = 10
 	orphan := reconciliationRecord{CommandID: "orphan-command", TaskID: "task-absent-from-snapshot", WorkspaceID: task.WorkspaceID, State: "unknown", Command: "printf orphan", OperationKey: "orphan-op", TimeoutMS: 120000}
-	value, err := f.b.CallClient(f.ctx, f.peer, "executor_reconcile", model.JSON(map[string]any{"reason": "operator approved journal comparison", "records": []reconciliationRecord{record, orphan}}))
+	value, err := f.b.CallClient(f.ctx, f.peer, "executor_reconcile", model.JSON(model.ExecutorReconcileArgs{Reason: "operator approved journal comparison", Records: []reconciliationRecord{record, orphan}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -806,7 +806,7 @@ func TestExecutorReconciliationRejectsFingerprintScopeAndKnownResultConflict(t *
 	}
 	command = f.command(command.ID)
 	call := func(record reconciliationRecord) error {
-		_, err := f.b.CallClient(f.ctx, f.peer, "executor_reconcile", model.JSON(map[string]any{"reason": "verify conflicting journal evidence", "records": []reconciliationRecord{record}}))
+		_, err := f.b.CallClient(f.ctx, f.peer, "executor_reconcile", model.JSON(model.ExecutorReconcileArgs{Reason: "verify conflicting journal evidence", Records: []reconciliationRecord{record}}))
 		return err
 	}
 	record := journalRecord(task, command, "exited")
@@ -838,7 +838,7 @@ func TestExecutorReconciliationReturnsKnownServerResultForLocalUnknown(t *testin
 		t.Fatal(err)
 	}
 	record := journalRecord(task, command, "unknown")
-	value, err := f.b.CallClient(f.ctx, f.peer, "executor_reconcile", model.JSON(map[string]any{"reason": "local process was lost but broker retained the final result", "records": []reconciliationRecord{record}}))
+	value, err := f.b.CallClient(f.ctx, f.peer, "executor_reconcile", model.JSON(model.ExecutorReconcileArgs{Reason: "local process was lost but broker retained the final result", Records: []reconciliationRecord{record}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -901,7 +901,7 @@ func TestSchedulingUsesExecutorReportedWorkspaceSubset(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := f.submit("workspace-1-task", "wait for this workspace to be configured")
-	value, err := f.b.CallClient(f.ctx, f.peer, "tasks_submit", model.JSON(map[string]any{"workspace_id": "workspace-2", "idempotency_key": "workspace-2-task", "prompt": "this workspace is configured"}))
+	value, err := f.b.CallClient(f.ctx, f.peer, "tasks_submit", model.JSON(Args{WorkspaceID: "workspace-2", IdempotencyKey: "workspace-2-task", Prompt: "this workspace is configured"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -941,11 +941,11 @@ func TestRunningTaskChecksCurrentExecutorWorkspaceConfiguration(t *testing.T) {
 	command := f.bash(task, "first", "true")
 	authorize := func() bool {
 		t.Helper()
-		value, err := f.b.CallClient(f.ctx, f.peer, "command_authorize", model.JSON(map[string]any{"command_id": command.ID, "assignment_id": command.AssignmentID}))
+		value, err := f.b.CallClient(f.ctx, f.peer, "command_authorize", model.JSON(Args{CommandID: command.ID, AssignmentID: command.AssignmentID}))
 		if err != nil {
 			t.Fatal(err)
 		}
-		return value.(map[string]bool)["allowed"]
+		return value.(model.CommandAuthorization).Allowed
 	}
 	if !authorize() {
 		t.Fatal("initial command was not authorized")
@@ -963,7 +963,7 @@ func TestRunningTaskChecksCurrentExecutorWorkspaceConfiguration(t *testing.T) {
 	if authorize() {
 		t.Fatal("command authorized after its workspace was removed from executor configuration")
 	}
-	_, err := f.agent("bash", map[string]any{"task_id": task.ID, "assignment_id": task.AssignmentID, "operation_key": "second", "command": "true", "wait_ms": 1})
+	_, err := f.agent("bash", Args{TaskID: task.ID, AssignmentID: task.AssignmentID, OperationKey: "second", Command: "true", WaitMS: 1})
 	requireCode(t, err, "executor_unavailable")
 	if err = f.store.View(f.ctx, func(tx *storage.Tx) error {
 		commands, err := tx.Commands(task.ID)
@@ -1013,13 +1013,13 @@ func TestNotStartedExecutionDiagnosticsAreBoundedAndReturned(t *testing.T) {
 			if got := f.command(command.ID); got.State != "not_started" || got.Error == nil || *got.Error != test.detail || got.ExitCode != nil {
 				t.Fatalf("execution diagnostic was not persisted: %+v", got)
 			}
-			value, err := f.agent("command_get", map[string]any{"task_id": task.ID, "command_id": command.ID})
+			value, err := f.agent("command_get", Args{TaskID: task.ID, CommandID: command.ID})
 			if err != nil {
 				t.Fatalf("command_get treated execution diagnostic as an RPC failure: %v", err)
 			}
-			result := value.(map[string]any)
-			got := result["command"].(model.Command)
-			if result["pending"] != false || got.State != "not_started" || got.Error == nil || *got.Error != test.detail {
+			result := value.(model.CommandResult)
+			got := result.Command
+			if result.Pending || got.State != "not_started" || got.Error == nil || *got.Error != test.detail {
 				t.Fatalf("command_get lost execution diagnostic: %+v", result)
 			}
 		})
@@ -1035,13 +1035,13 @@ func TestNonzeroCommandExitIsAnExecutionResult(t *testing.T) {
 	if err := f.b.ClientEvent(f.ctx, f.peer, f.event("command.finished", event)); err != nil {
 		t.Fatalf("nonzero process exit was treated as a protocol failure: %v", err)
 	}
-	value, err := f.agent("command_get", map[string]any{"task_id": task.ID, "command_id": command.ID})
+	value, err := f.agent("command_get", Args{TaskID: task.ID, CommandID: command.ID})
 	if err != nil {
 		t.Fatalf("nonzero process exit made command_get fail: %v", err)
 	}
-	result := value.(map[string]any)
-	got := result["command"].(model.Command)
-	if result["pending"] != false || got.State != "exited" || got.ExitCode == nil || *got.ExitCode != code || got.Error != nil {
+	result := value.(model.CommandResult)
+	got := result.Command
+	if result.Pending || got.State != "exited" || got.ExitCode == nil || *got.ExitCode != code || got.Error != nil {
 		t.Fatalf("nonzero process exit was not returned intact: %+v", result)
 	}
 	if got := f.task(task.ID); got.State != "running" || f.workspace().Quarantined {

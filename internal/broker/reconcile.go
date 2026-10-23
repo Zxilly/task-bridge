@@ -11,41 +11,23 @@ import (
 	"github.com/Zxilly/task-bridge/internal/storage"
 )
 
-type reconciliationRecord struct {
-	Error        *model.Error `json:"error,omitempty"`
-	CommandID    string       `json:"command_id"`
-	TaskID       string       `json:"task_id"`
-	WorkspaceID  string       `json:"workspace_id"`
-	State        string       `json:"state"`
-	Command      string       `json:"command"`
-	OperationKey string       `json:"operation_key"`
-	Cwd          string       `json:"cwd"`
-	TimeoutMS    int64        `json:"timeout_ms"`
-	ExitCode     *int         `json:"exit_code,omitempty"`
-	Signal       string       `json:"signal,omitempty"`
-	StartedAt    int64        `json:"started_at,omitempty"`
-	FinishedAt   int64        `json:"finished_at,omitempty"`
-	DurationMS   int64        `json:"duration_ms,omitempty"`
-}
+type reconciliationRecord = model.ExecutorReconcileRecord
 
 // reconcileExecutor is an explicit, audited metadata operation. It never grants
 // execution, creates a command, or clears quarantine. Unknown IDs are retained
 // as evidence rather than being interpreted as work that never happened.
-func (b *Broker) reconcileExecutor(ctx context.Context, peer *ClientPeer, raw json.RawMessage) (any, error) {
-	var q struct {
-		Reason  string                 `json:"reason"`
-		Records []reconciliationRecord `json:"records"`
-	}
+func (b *Broker) reconcileExecutor(ctx context.Context, peer *ClientPeer, raw json.RawMessage) (model.ExecutorReconcileResult, error) {
+	var q model.ExecutorReconcileArgs
 	if len(raw) > 512<<10 {
-		return nil, model.Err("invalid_arguments", "reconciliation batch exceeds 512 KiB")
+		return model.ExecutorReconcileResult{}, model.Err("invalid_arguments", "reconciliation batch exceeds 512 KiB")
 	}
 	d := json.NewDecoder(strings.NewReader(string(raw)))
 	d.DisallowUnknownFields()
 	if e := d.Decode(&q); e != nil {
-		return nil, model.Err("invalid_arguments", e.Error())
+		return model.ExecutorReconcileResult{}, model.Err("invalid_arguments", e.Error())
 	}
 	if !bounded(q.Reason, 2048) || len(q.Records) > 100 {
-		return nil, model.Err("invalid_arguments", "reason and up to 100 records required")
+		return model.ExecutorReconcileResult{}, model.Err("invalid_arguments", "reason and up to 100 records required")
 	}
 	known, orphans := []string{}, []string{}
 	serverResults := map[string]model.CommandEvent{}
@@ -148,7 +130,7 @@ func (b *Broker) reconcileExecutor(ctx context.Context, peer *ClientPeer, raw js
 		return nil
 	})
 	if e != nil {
-		return nil, e
+		return model.ExecutorReconcileResult{}, e
 	}
-	return map[string]any{"known_command_ids": known, "orphan_command_ids": orphans, "server_results": serverResults}, nil
+	return model.ExecutorReconcileResult{KnownCommandIDs: known, OrphanCommandIDs: orphans, ServerResults: serverResults}, nil
 }

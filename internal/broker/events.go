@@ -167,7 +167,7 @@ func (b *Broker) ClientEvent(ctx context.Context, c *ClientPeer, m model.Envelop
 			return e
 		}
 		if m.Type != "command.output" {
-			if e = tx.Event(task.ID, m.Type, map[string]any{"command_id": cmd.ID, "state": cmd.State}); e != nil {
+			if e = tx.Event(task.ID, m.Type, model.CommandStatePayload{CommandID: cmd.ID, State: cmd.State}); e != nil {
 				return e
 			}
 		}
@@ -275,7 +275,7 @@ func (b *Broker) Admin(ctx context.Context, method string, raw json.RawMessage) 
 			return nil, e
 		}
 		p, token, e := b.CreateDevice(ctx, p)
-		return map[string]any{"device": p, "token": token}, e
+		return model.DeviceCreateResult{Device: p, Token: token}, e
 	}
 	if method == "workspaces.create" {
 		var w model.Workspace
@@ -284,22 +284,17 @@ func (b *Broker) Admin(ctx context.Context, method string, raw json.RawMessage) 
 		}
 		return w, b.CreateWorkspace(ctx, w)
 	}
-	var a struct {
-		ID      string `json:"id"`
-		Outcome string `json:"outcome"`
-		Reason  string `json:"reason"`
-		Output  string `json:"output"`
-	}
+	var a model.AdminArgs
 	if len(raw) > 0 {
 		if e := json.Unmarshal(raw, &a); e != nil {
 			return nil, e
 		}
 	}
 	if method == "devices.revoke" {
-		return map[string]bool{"revoked": true}, b.Revoke(ctx, a.ID)
+		return model.RevocationResult{Revoked: true}, b.Revoke(ctx, a.ID)
 	}
 	if method == "backup" {
-		return map[string]string{"output": a.Output}, b.Store.Backup(ctx, a.Output)
+		return model.BackupResult{Output: a.Output}, b.Store.Backup(ctx, a.Output)
 	}
 	var out any
 	e := b.update(ctx, func(tx *storage.Tx) error {
@@ -350,7 +345,7 @@ func (b *Broker) Admin(ctx context.Context, method string, raw json.RawMessage) 
 			if e = tx.Resolution(a.ID, "journal_binding_reset", a.Reason, "local-admin"); e != nil {
 				return e
 			}
-			out = map[string]bool{"reset": true, "old_executor_tokens_revoked": true}
+			out = model.JournalResetResult{Reset: true, OldExecutorTokensRevoked: true}
 			return nil
 		case "tasks.inspect":
 			t, e := tx.Task(a.ID)
