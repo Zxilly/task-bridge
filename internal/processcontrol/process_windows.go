@@ -1,6 +1,6 @@
 //go:build windows
 
-package executor
+package processcontrol
 
 import (
 	"errors"
@@ -13,7 +13,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-type processControl struct {
+type Control struct {
 	job      windows.Handle
 	thread   windows.Handle
 	assigned bool
@@ -23,7 +23,7 @@ type processControl struct {
 // public Win32 ownership query. Resolve it from the system DLL, not PATH.
 var getProcessIDOfThread = windows.NewLazySystemDLL("kernel32.dll").NewProc("GetProcessIdOfThread")
 
-func configureProcess(cmd *exec.Cmd) (*processControl, error) {
+func Prepare(cmd *exec.Cmd) (*Control, error) {
 	if err := getProcessIDOfThread.Find(); err != nil {
 		return nil, fmt.Errorf("load execution thread ownership API: %w", err)
 	}
@@ -38,16 +38,16 @@ func configureProcess(cmd *exec.Cmd) (*processControl, error) {
 		return nil, fmt.Errorf("configure execution job: %w", err)
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_SUSPENDED}
-	return &processControl{job: job}, nil
+	return &Control{job: job}, nil
 }
 
-func (p *processControl) start(cmd *exec.Cmd) (err error) {
+func (p *Control) Start(cmd *exec.Cmd) (err error) {
 	if err = cmd.Start(); err != nil {
 		return err
 	}
 	defer func() {
 		if err != nil {
-			p.terminate(cmd, true)
+			p.Terminate(cmd, true)
 			_ = cmd.Wait()
 		}
 	}()
@@ -112,7 +112,7 @@ func openInitialThread(pid uint32) (thread windows.Handle, err error) {
 	return thread, nil
 }
 
-func (p *processControl) resume() error {
+func (p *Control) Resume() error {
 	defer p.closeThread()
 	previous, err := windows.ResumeThread(p.thread)
 	if err != nil {
@@ -124,7 +124,7 @@ func (p *processControl) resume() error {
 	return nil
 }
 
-func (p *processControl) terminate(cmd *exec.Cmd, _ bool) {
+func (p *Control) Terminate(cmd *exec.Cmd, _ bool) {
 	if p.job != 0 {
 		if err := windows.TerminateJobObject(p.job, 1); err != nil {
 			// The last non-inherited job handle also terminates its members.
@@ -137,22 +137,22 @@ func (p *processControl) terminate(cmd *exec.Cmd, _ bool) {
 	}
 }
 
-func (p *processControl) closeThread() {
+func (p *Control) closeThread() {
 	if p.thread != 0 {
 		_ = windows.CloseHandle(p.thread)
 		p.thread = 0
 	}
 }
 
-func (p *processControl) closeJob() {
+func (p *Control) closeJob() {
 	if p.job != 0 {
 		_ = windows.CloseHandle(p.job)
 		p.job = 0
 	}
 }
 
-func (p *processControl) close() {
+func (p *Control) Close() {
 	p.closeJob()
 	p.closeThread()
 }
-func exitSignal(state *os.ProcessState) string { return "" }
+func ExitSignal(state *os.ProcessState) string { return "" }

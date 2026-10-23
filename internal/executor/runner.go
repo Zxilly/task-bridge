@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Zxilly/task-bridge/internal/processcontrol"
 )
 
 type Config struct {
@@ -121,18 +123,18 @@ func Run(ctx context.Context, cfg Config, req Request, started func(int) error, 
 	if cmd.Env == nil {
 		cmd.Env = DefaultEnv()
 	}
-	process, err := configureProcess(cmd)
+	process, err := processcontrol.Prepare(cmd)
 	if err != nil {
 		result.Error = err.Error()
 		return result
 	}
-	defer process.close()
+	defer process.Close()
 	output := &collector{max: cfg.MaxOutputBytes, emit: emit, cancel: cancel}
 	cmd.Stdout = streamWriter{output, "stdout"}
 	cmd.Stderr = streamWriter{output, "stderr"}
 	// Bound pipe inheritance by unsupported detached descendants after exit.
 	cmd.WaitDelay = 3 * time.Second
-	if err = process.start(cmd); err != nil {
+	if err = process.Start(cmd); err != nil {
 		result.Error = err.Error()
 		return result
 	}
@@ -143,8 +145,8 @@ func Run(ctx context.Context, cfg Config, req Request, started func(int) error, 
 		}
 	}
 	if commandCtx.Err() == nil {
-		if err = process.resume(); err != nil {
-			process.terminate(cmd, true)
+		if err = process.Resume(); err != nil {
+			process.Terminate(cmd, true)
 			_ = cmd.Wait()
 			result.Error = err.Error()
 			return result
@@ -155,7 +157,7 @@ func Run(ctx context.Context, cfg Config, req Request, started func(int) error, 
 	select {
 	case err = <-done:
 	case <-commandCtx.Done():
-		process.terminate(cmd, false)
+		process.Terminate(cmd, false)
 		timer := time.NewTimer(cfg.KillGrace)
 		select {
 		case err = <-done:
@@ -163,14 +165,14 @@ func Run(ctx context.Context, cfg Config, req Request, started func(int) error, 
 				<-timer.C
 			}
 		case <-timer.C:
-			process.terminate(cmd, true)
+			process.Terminate(cmd, true)
 			err = <-done
 		}
 	}
 	result.DurationMS = time.Since(begin).Milliseconds()
 	if cmd.ProcessState != nil {
 		result.ExitCode = cmd.ProcessState.ExitCode()
-		result.Signal = exitSignal(cmd.ProcessState)
+		result.Signal = processcontrol.ExitSignal(cmd.ProcessState)
 	}
 	result.Truncated = output.dropped > 0
 	result.DroppedBytes = output.dropped

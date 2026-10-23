@@ -7,6 +7,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/Zxilly/task-bridge/internal/mcputil"
 	"github.com/Zxilly/task-bridge/internal/model"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -117,19 +118,7 @@ func addClientTool[In clientTaskRequest](server *mcp.Server, c *Client, descript
 }
 
 func clientJSONTaskID(data json.RawMessage) string {
-	var identity struct {
-		TaskID string `json:"task_id"`
-		Task   struct {
-			ID string `json:"task_id"`
-		} `json:"task"`
-	}
-	if json.Unmarshal(data, &identity) == nil {
-		if identity.TaskID != "" {
-			return identity.TaskID
-		}
-		return identity.Task.ID
-	}
-	return ""
+	return mcputil.JSONTaskID(data)
 }
 
 func clientToolResult(value any, err error, taskID string) *mcp.CallToolResult {
@@ -171,14 +160,7 @@ func clientErrorValue(err *model.Error, taskID string) model.ErrorResult {
 }
 
 func clientSmallError(code, message, taskID string) *mcp.CallToolResult {
-	value := clientErrorValue(&model.Error{Code: code, Message: message}, taskID)
-	result := &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(model.JSON(value))}}, IsError: true}
-	if wire, err := json.Marshal(result); err != nil || len(wire) > model.MaxToolBytes {
-		// A malicious or corrupt task ID must not defeat the final bound.
-		value.TaskID = ""
-		result.Content = []mcp.Content{&mcp.TextContent{Text: string(model.JSON(value))}}
-	}
-	return result
+	return mcputil.SmallError(code, message, taskID)
 }
 
 // Progress describes this bounded tool call, never completion of the task.
