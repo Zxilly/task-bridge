@@ -22,6 +22,10 @@ type observedCall struct {
 	connectionID, name string
 	args               json.RawMessage
 }
+type fakeToolResult struct {
+	OK   bool   `json:"ok"`
+	Name string `json:"name,omitempty"`
+}
 type fakeService struct {
 	connected    chan string
 	disconnected chan string
@@ -59,7 +63,7 @@ func (s *fakeService) CallAgent(ctx context.Context, p model.Principal, cid, nam
 	if s.call != nil {
 		return s.call(ctx, name, args)
 	}
-	return map[string]any{"ok": true, "name": name}, nil
+	return fakeToolResult{OK: true, Name: name}, nil
 }
 
 func testServer(t *testing.T, service *fakeService) *httptest.Server {
@@ -256,12 +260,24 @@ func TestOfficialSDKClientListsValidatesAndRoutesTools(t *testing.T) {
 		valid bool
 	}{
 		{"task_get", map[string]any{"task_id": "task-1"}, true},
+		{"task_get", map[string]any{"task_id": ""}, false},
+		{"task_get", map[string]any{"task_id": strings.Repeat("t", 128)}, true},
+		{"task_get", map[string]any{"task_id": strings.Repeat("t", 129)}, false},
 		{"bash", map[string]any{"task_id": "task-1", "assignment_id": "assignment-1", "operation_key": "op-1", "command": "pwd", "wait_ms": 0}, true},
+		{"bash", map[string]any{"task_id": "task-1", "assignment_id": "assignment-1", "operation_key": "op-1", "command": "pwd", "timeout_ms": 0}, false},
+		{"bash", map[string]any{"task_id": "task-1", "assignment_id": "assignment-1", "operation_key": "op-1", "command": "pwd", "wait_ms": 120001}, false},
 		{"bash", map[string]any{"task_id": "task-1", "command": "pwd"}, false},
 		{"task_get", map[string]any{"task_id": "task-1", "executor_id": "other-device"}, false},
 		{"command_output", map[string]any{"task_id": "task-1", "command_id": "command-1", "cursor": 0, "limit": 16384}, true},
 		{"command_output", map[string]any{"task_id": "task-1", "command_id": "command-1", "cursor": -1}, false},
+		{"command_output", map[string]any{"task_id": "task-1", "command_id": "command-1", "cursor": 1.5}, false},
+		{"command_output", map[string]any{"task_id": "task-1", "command_id": "command-1", "cursor": 1<<53 - 1}, true},
+		{"command_output", map[string]any{"task_id": "task-1", "command_id": "command-1", "cursor": 1 << 53}, false},
+		{"command_output", map[string]any{"task_id": "task-1", "command_id": "command-1", "limit": 0}, false},
+		{"command_output", map[string]any{"task_id": "task-1", "command_id": "command-1", "limit": 16385}, false},
 		{"task_complete", map[string]any{"task_id": "task-1", "assignment_id": "assignment-1", "outcome": "unknown", "summary": "done"}, false},
+		{"task_complete", map[string]any{"task_id": "task-1", "assignment_id": "assignment-1", "outcome": "succeeded", "summary": "done", "result": nil}, true},
+		{"task_complete", map[string]any{"task_id": "task-1", "assignment_id": "assignment-1", "outcome": "failed", "summary": "done", "result": []any{true, "text", 3}}, true},
 	} {
 		result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: tc.name, Arguments: tc.args})
 		if err != nil {
@@ -269,6 +285,19 @@ func TestOfficialSDKClientListsValidatesAndRoutesTools(t *testing.T) {
 		}
 		if result.IsError == tc.valid {
 			t.Fatalf("%s args=%v IsError=%v", tc.name, tc.args, result.IsError)
+		}
+		if !tc.valid {
+			if result.StructuredContent != nil {
+				t.Fatal("validation error duplicated in structuredContent")
+			}
+			var body struct {
+				Error struct {
+					Code string `json:"code"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal([]byte(result.Content[0].(*mcp.TextContent).Text), &body); err != nil || body.Error.Code != "invalid_arguments" {
+				t.Fatalf("validation error lost domain envelope: %+v err=%v", body, err)
+			}
 		}
 		if tc.valid {
 			select {
@@ -285,6 +314,21 @@ func TestOfficialSDKClientListsValidatesAndRoutesTools(t *testing.T) {
 	case call := <-s.calls:
 		t.Fatalf("invalid args reached service: %+v", call)
 	default:
+	}
+	// Schema validation may inspect decoded numbers, but must forward the raw
+	// result without losing integers that cannot be represented by float64.
+	raw := json.RawMessage(`{"task_id":"task-1","assignment_id":"assignment-1","outcome":"succeeded","summary":"完成","result":{"precise":9007199254740993}}`)
+	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "task_complete", Arguments: raw})
+	if err != nil || result.IsError {
+		t.Fatalf("raw result rejected: result=%+v err=%v", result, err)
+	}
+	select {
+	case call := <-s.calls:
+		if string(call.args) != string(raw) {
+			t.Fatalf("raw arguments changed: got %s, want %s", call.args, raw)
+		}
+	case <-ctx.Done():
+		t.Fatal("raw result not routed")
 	}
 }
 
@@ -448,7 +492,7 @@ func TestConcurrentToolLimitAndCancelledWaitReleaseSlots(t *testing.T) {
 	stopped := make(chan struct{}, 64)
 	s.call = func(ctx context.Context, name string, _ json.RawMessage) (any, error) {
 		if name != "command_wait" {
-			return map[string]any{"ok": true}, nil
+			return fakeToolResult{OK: true}, nil
 		}
 		started <- struct{}{}
 		<-ctx.Done()

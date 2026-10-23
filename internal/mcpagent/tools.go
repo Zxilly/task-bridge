@@ -16,21 +16,26 @@ type toolDefinition struct {
 	name        string
 	description string
 	required    []string
-	properties  map[string]any
+	properties  map[string]*jsonschema.Schema
 	readOnly    bool
 }
 
-func textSchema(max int) map[string]any {
-	return map[string]any{"type": "string", "minLength": 1, "maxLength": max}
+func textSchema(max int) *jsonschema.Schema {
+	min := 1
+	return &jsonschema.Schema{Type: "string", MinLength: &min, MaxLength: &max}
 }
-func integerSchema(min, max int) map[string]any {
-	return map[string]any{"type": "integer", "minimum": min, "maximum": max}
+func integerSchema(min, max int) *jsonschema.Schema {
+	lower, upper := float64(min), float64(max)
+	return &jsonschema.Schema{Type: "integer", Minimum: &lower, Maximum: &upper}
 }
 
 func toolDefinitions() []toolDefinition {
-	id := textSchema(128)
-	assignment := map[string]any{"task_id": id, "assignment_id": id}
-	command := func() map[string]any { return map[string]any{"task_id": id, "command_id": id} }
+	// Resolve requires a schema tree, so each property gets its own node.
+	id := func() *jsonschema.Schema { return textSchema(128) }
+	assignment := map[string]*jsonschema.Schema{"task_id": id(), "assignment_id": id()}
+	command := func() map[string]*jsonschema.Schema {
+		return map[string]*jsonschema.Schema{"task_id": id(), "command_id": id()}
+	}
 	get := command()
 	wait := command()
 	wait["wait_ms"] = integerSchema(0, 120000)
@@ -41,15 +46,15 @@ func toolDefinitions() []toolDefinition {
 	cancel["reason"] = textSchema(1024)
 	return []toolDefinition{
 		{"task_accept", "Accept a channel task offer using its exact task_id and assignment_id.", []string{"task_id", "assignment_id"}, assignment, false},
-		{"task_get", "Read the assigned task and command snapshot.", []string{"task_id"}, map[string]any{"task_id": id}, true},
-		{"task_resume", "Request a new assignment after reconnect; unresolved commands require reconciliation first.", []string{"task_id", "previous_assignment_id"}, map[string]any{"task_id": id, "previous_assignment_id": id}, false},
-		{"bash", "Execute Bash on the assigned B workspace. Reuse operation_key only for retries of the identical command. wait_ms bounds this call, not command execution.", []string{"task_id", "assignment_id", "operation_key", "command"}, map[string]any{"task_id": id, "assignment_id": id, "operation_key": textSchema(200), "command": textSchema(32768), "cwd": textSchema(4096), "timeout_ms": integerSchema(1, 900000), "wait_ms": integerSchema(0, 120000)}, false},
+		{"task_get", "Read the assigned task and command snapshot.", []string{"task_id"}, map[string]*jsonschema.Schema{"task_id": id()}, true},
+		{"task_resume", "Request a new assignment after reconnect; unresolved commands require reconciliation first.", []string{"task_id", "previous_assignment_id"}, map[string]*jsonschema.Schema{"task_id": id(), "previous_assignment_id": id()}, false},
+		{"bash", "Execute Bash on the assigned B workspace. Reuse operation_key only for retries of the identical command. wait_ms bounds this call, not command execution.", []string{"task_id", "assignment_id", "operation_key", "command"}, map[string]*jsonschema.Schema{"task_id": id(), "assignment_id": id(), "operation_key": textSchema(200), "command": textSchema(32768), "cwd": textSchema(4096), "timeout_ms": integerSchema(1, 900000), "wait_ms": integerSchema(0, 120000)}, false},
 		{"command_get", "Get command status and execution metadata.", []string{"task_id", "command_id"}, get, true},
 		{"command_wait", "Wait for a command with a bounded wait. Cancelling this MCP call does not cancel the command.", []string{"task_id", "command_id"}, wait, true},
 		{"command_output", "Read a bounded output page. Continue with the returned cursor.", []string{"task_id", "command_id"}, output, true},
 		{"command_cancel", "Explicitly request cancellation of a task command, including one from an older assignment.", []string{"task_id", "command_id"}, cancel, false},
-		{"task_progress", "Record a concise task progress update for B (up to 2048 UTF-8 bytes).", []string{"task_id", "assignment_id", "message"}, map[string]any{"task_id": id, "assignment_id": id, "message": textSchema(2048)}, false},
-		{"task_complete", "Complete the task only after all commands have known terminal outcomes. Summary is at most 2048 UTF-8 bytes; optional result is at most 4096 JSON bytes.", []string{"task_id", "assignment_id", "outcome", "summary"}, map[string]any{"task_id": id, "assignment_id": id, "outcome": map[string]any{"type": "string", "enum": []string{"succeeded", "failed"}}, "summary": textSchema(2048), "result": map[string]any{}}, false},
+		{"task_progress", "Record a concise task progress update for B (up to 2048 UTF-8 bytes).", []string{"task_id", "assignment_id", "message"}, map[string]*jsonschema.Schema{"task_id": id(), "assignment_id": id(), "message": textSchema(2048)}, false},
+		{"task_complete", "Complete the task only after all commands have known terminal outcomes. Summary is at most 2048 UTF-8 bytes; optional result is at most 4096 JSON bytes.", []string{"task_id", "assignment_id", "outcome", "summary"}, map[string]*jsonschema.Schema{"task_id": id(), "assignment_id": id(), "outcome": {Type: "string", Enum: []any{"succeeded", "failed"}}, "summary": textSchema(2048), "result": {}}, false},
 	}
 }
 
@@ -58,12 +63,16 @@ func registerTools(server *mcp.Server, service model.AgentService, principal mod
 	// Reject excess calls immediately rather than allocating another waiter.
 	slots := make(chan struct{}, 64)
 	for _, def := range toolDefinitions() {
-		schema := map[string]any{"type": "object", "additionalProperties": false, "required": def.required, "properties": def.properties}
+		schema := &jsonschema.Schema{
+			Type:                 "object",
+			AdditionalProperties: &jsonschema.Schema{Not: &jsonschema.Schema{}},
+			Required:             def.required,
+			Properties:           def.properties,
+		}
 		// Use the same validator as the official SDK, with a low-level handler
-		// so validation failures also pass through the total response size cap.
-		var parsed jsonschema.Schema
-		_ = json.Unmarshal(model.JSON(schema), &parsed)
-		resolved, err := parsed.Resolve(nil)
+		// so validation failures use our domain error envelope and total result
+		// size cap. Keep raw arguments intact for the broker's UTF-8 byte limits.
+		resolved, err := schema.Resolve(nil)
 		if err != nil {
 			panic(err)
 		} // Static programmer-owned schemas.
@@ -132,7 +141,7 @@ func validProgressToken(token any) bool {
 func toolResult(value any, err error) *mcp.CallToolResult {
 	isError := err != nil
 	if err != nil {
-		value = map[string]any{"error": model.AsError(err)}
+		value = model.ErrorResult{Error: model.AsError(err)}
 	}
 	data, marshalErr := json.Marshal(value)
 	if marshalErr != nil {
@@ -149,6 +158,6 @@ func toolResult(value any, err error) *mcp.CallToolResult {
 }
 
 func smallError(code, message string) *mcp.CallToolResult {
-	data := model.JSON(map[string]any{"error": &model.Error{Code: code, Message: message}})
+	data := model.JSON(model.ErrorResult{Error: &model.Error{Code: code, Message: message}})
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(data)}}, IsError: true}
 }
