@@ -1,0 +1,46 @@
+version: 2
+project_name: claude-task-bridge
+
+builds:
+  - id: server
+    main: ./cmd/bridge-server
+    binary: bridge-server
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, windows]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags: [-s -w]
+  - id: client
+    main: ./cmd/bridge-client
+    binary: bridge-client
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, windows]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags: [-s -w]
+
+archives:
+  - ids: [server, client]
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - docs/**
+      - examples/**
+      - deploy/Dockerfile
+      - deploy/compose.yaml
+      - deploy/Caddyfile
+      - deploy/env.example
+
+checksum:
+  name_template: checksums.txt
+
+release:
+  disable: true
+
+changelog:
+  disable: true

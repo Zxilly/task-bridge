@@ -1,0 +1,57 @@
+name: claude-task-bridge
+
+services:
+  broker:
+    image: ${BRIDGE_IMAGE:-claude-task-bridge:0.1.0-local}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args:
+        GO_VERSION: ${GO_VERSION:-1.26.0}
+    restart: unless-stopped
+    environment:
+      BRIDGE_ADMIN_TOKEN: ${BRIDGE_ADMIN_TOKEN:?Set a high-entropy BRIDGE_ADMIN_TOKEN in .env}
+    volumes:
+      - bridge_data:/data
+      - ../examples/server-container.json:/etc/bridge/server.json:ro
+    expose:
+      - "8080"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  caddy:
+    image: ${CADDY_IMAGE:-caddy:2.11.7-alpine}
+    restart: unless-stopped
+    depends_on:
+      broker:
+        condition: service_healthy
+    environment:
+      BRIDGE_DOMAIN: ${BRIDGE_DOMAIN:?Set BRIDGE_DOMAIN in .env}
+      ACME_EMAIL: ${ACME_EMAIL:?Set ACME_EMAIL in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  bridge_data:
+  caddy_data:
+  caddy_config:

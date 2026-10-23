@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Go / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Require Bash for executor tests
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            test -x '/c/Program Files/Git/bin/bash.exe'
+            printf '%s\n' 'BRIDGE_TEST_BASH=C:\Program Files\Git\bin\bash.exe' >> "$GITHUB_ENV"
+          else
+            printf 'BRIDGE_TEST_BASH=%s\n' "$(command -v bash)" >> "$GITHUB_ENV"
+          fi
+      - name: Verify modules
+        run: go mod verify
+      - name: Check Go formatting
+        run: |
+          files=$(gofmt -l $(git ls-files '*.go'))
+          if [ -n "$files" ]; then
+            printf '%s\n' "$files"
+            exit 1
+          fi
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test -count=1 -timeout=10m ./...
+      - name: Build both applications
+        env:
+          CGO_ENABLED: "0"
+        run: go build -trimpath ./cmd/...
+
+  race:
+    name: Go race / Linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Require Bash for executor tests
+        run: printf 'BRIDGE_TEST_BASH=%s\n' "$(command -v bash)" >> "$GITHUB_ENV"
+      - run: go test -race -count=1 -timeout=10m ./...
+
+  container:
+    name: Container build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: docker build --file deploy/Dockerfile --tag claude-task-bridge:ci .
