@@ -10,8 +10,16 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func configureProcess(cmd *exec.Cmd) { cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} }
-func terminateTree(cmd *exec.Cmd, force bool) {
+type processControl struct{}
+
+func configureProcess(cmd *exec.Cmd) (*processControl, error) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	return &processControl{}, nil
+}
+func (*processControl) start(cmd *exec.Cmd) error { return cmd.Start() }
+func (*processControl) resume() error             { return nil }
+func (*processControl) close()                    {}
+func (*processControl) terminate(cmd *exec.Cmd, force bool) {
 	if cmd.Process == nil {
 		return
 	}

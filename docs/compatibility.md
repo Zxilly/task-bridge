@@ -109,7 +109,7 @@ claude --tools "" --strict-mcp-config --mcp-config agent-mcp.json \
 
 Linux 使用已安装的 Bash。Windows 使用 Git for Windows Bash，配置路径指向真实 `bash.exe`。本地命令采用 `--noprofile --norc -c`，没有交互 stdin、PTY 或跨命令持久 shell；依赖 shell profile 的 PATH/环境需在 B 配置中明确提供。
 
-Linux 进程组和 Windows 普通子孙进程树已分别通过超时终止测试；真实 B CLI 的宿主 EOF 也经过停止执行的验证。刻意脱离进程树或保留继承输出管道的后台进程不在首版支持范围；无法确认的命令应保留 unknown 状态。恢复不依赖过期 PID 来杀进程，以免误伤 PID 复用后的其他进程。
+Linux 进程组和 Windows 普通子孙进程树已分别通过超时终止测试；真实 B CLI 的宿主 EOF 也经过停止执行的验证。Windows 每次执行使用独立 Job Object，在 Bash 恢复运行前完成绑定；取消直接终止 Job，客户端异常退出也会关闭 Job 并停止其中的子进程。刻意脱离平台进程管理或保留继承输出管道的后台进程不在首版支持范围；无法确认的命令应保留 unknown 状态。恢复不依赖过期 PID 来杀进程，以免误伤 PID 复用后的其他进程。
 
 cwd 检查覆盖配置工作区路径与符号链接解析，但不是操作系统沙箱。任意命令仍以 B 的账号权限运行。
 

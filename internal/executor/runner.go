@@ -121,13 +121,18 @@ func Run(ctx context.Context, cfg Config, req Request, started func(int) error, 
 	if cmd.Env == nil {
 		cmd.Env = DefaultEnv()
 	}
-	configureProcess(cmd)
+	process, err := configureProcess(cmd)
+	if err != nil {
+		result.Error = err.Error()
+		return result
+	}
+	defer process.close()
 	output := &collector{max: cfg.MaxOutputBytes, emit: emit, cancel: cancel}
 	cmd.Stdout = streamWriter{output, "stdout"}
 	cmd.Stderr = streamWriter{output, "stderr"}
 	// Bound pipe inheritance by unsupported detached descendants after exit.
 	cmd.WaitDelay = 3 * time.Second
-	if err = cmd.Start(); err != nil {
+	if err = process.start(cmd); err != nil {
 		result.Error = err.Error()
 		return result
 	}
@@ -137,12 +142,20 @@ func Run(ctx context.Context, cfg Config, req Request, started func(int) error, 
 			cancel()
 		}
 	}
+	if commandCtx.Err() == nil {
+		if err = process.resume(); err != nil {
+			process.terminate(cmd, true)
+			_ = cmd.Wait()
+			result.Error = err.Error()
+			return result
+		}
+	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	select {
 	case err = <-done:
 	case <-commandCtx.Done():
-		terminateTree(cmd, false)
+		process.terminate(cmd, false)
 		timer := time.NewTimer(cfg.KillGrace)
 		select {
 		case err = <-done:
@@ -150,7 +163,7 @@ func Run(ctx context.Context, cfg Config, req Request, started func(int) error, 
 				<-timer.C
 			}
 		case <-timer.C:
-			terminateTree(cmd, true)
+			process.terminate(cmd, true)
 			err = <-done
 		}
 	}

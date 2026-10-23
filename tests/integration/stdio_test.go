@@ -143,7 +143,9 @@ func TestClientProcessCrashReportsUnknownAndNeverReexecutes(t *testing.T) {
 	host, process := connect()
 	tool(t, f.ctx, host, "tasks_submit", map[string]any{"workspace_id": "demo", "prompt": "Do not repeat an execution with an unknown result.", "idempotency_key": "hard-crash"})
 	id, assignment := accept(t, f)
-	r := tool(t, f.ctx, f.a, "bash", map[string]any{"task_id": id, "assignment_id": assignment, "operation_key": "unknown-on-crash", "command": "sleep 1; printf 'once\\n' >> crash-proof.txt", "wait_ms": 1})
+	release := filepath.Join(f.root, "crash-release.txt")
+	t.Cleanup(func() { _ = os.WriteFile(release, nil, 0600) })
+	r := tool(t, f.ctx, f.a, "bash", map[string]any{"task_id": id, "assignment_id": assignment, "operation_key": "unknown-on-crash", "command": "printf 'once\\n' >> crash-proof.txt; while [ ! -f crash-release.txt ]; do sleep 0.1; done", "wait_ms": 1})
 	cmdID := r["command"].(map[string]any)["command_id"].(string)
 	for {
 		v := tool(t, f.ctx, f.a, "command_get", map[string]any{"task_id": id, "command_id": cmdID})
@@ -156,9 +158,26 @@ func TestClientProcessCrashReportsUnknownAndNeverReexecutes(t *testing.T) {
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
-	// Kill only the known test client process. Its separately managed Bash is
-	// allowed to finish; recovery must not infer that an unreported effect failed.
+	// Crash after an observable effect but before a terminal result. Windows
+	// closes the execution Job when the client dies, so the effect must precede
+	// the crash; recovery must still not infer that unreported work had no effect.
+	effectDeadline := time.Now().Add(4 * time.Second)
+	for {
+		data, err := os.ReadFile(filepath.Join(f.root, "crash-proof.txt"))
+		if err == nil && string(data) == "once\n" {
+			break
+		}
+		if time.Now().After(effectDeadline) {
+			t.Fatalf("test command did not record its controlled effect: %q %v", data, err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	// Kill only the known test client process.
 	if e := process.Process.Kill(); e != nil {
+		t.Fatal(e)
+	}
+	// Release a surviving Unix child only after its reporting process is dead.
+	if e := os.WriteFile(release, nil, 0600); e != nil {
 		t.Fatal(e)
 	}
 	_ = host.Close()
