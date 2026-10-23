@@ -66,6 +66,17 @@ $env:BRIDGE_ADMIN_TOKEN = [Convert]::ToHexString([System.Security.Cryptography.R
 
 开发配置默认监听 `127.0.0.1:8080`，管理 API 监听 `127.0.0.1:8081`。部署到服务器时使用 [运维步骤](docs/operations.md) 和 `examples/server-container.json`。
 
+## 让 agent 自行配置
+
+运行中的服务提供两份英文 Markdown 指南，可将相应 URL 交给该端 agent：
+
+- `/setup/claude.md`：[Claude Code（A）配置指南](internal/server/setup/claude.md)，配置远程 WebSocket MCP 与 channel。
+- `/setup/client.md`：[本地执行端（B）配置指南](internal/server/setup/client.md)，配置本地工作区、执行器及 stdio MCP 宿主。
+
+例如，部署在 `https://bridge.example.com` 时，将 `https://bridge.example.com/setup/claude.md` 或 `https://bridge.example.com/setup/client.md` 提供给对应 agent。指南随服务二进制嵌入，Caddy 模板已开放这两个入口。
+
+还需分别提供管理员已签发的 A 或 B 设备 token，以及工作区等实例信息。指南不包含凭据；agent 只配置本端角色，并在修改已有配置前保留原内容。直接读取源码中的指南时，需另行指定实际服务地址。
+
 ## 配置 B 与 A
 
 B 将逻辑 `workspace_id` 映射到本地目录，并在 Hello 中上报本次配置的工作区子集。未上报工作区的任务保持 queued，该工作区的新 Bash 请求被拒绝。使用 `examples/client-config.json`（Linux）或 `examples/client-config.windows.json`（Windows）建立自己的 `client.json`，在 MCP 宿主中加载 `task-bridge-client mcp --config <绝对路径>`。stdio 的 stdout 由 MCP 独占，诊断日志写入 stderr。

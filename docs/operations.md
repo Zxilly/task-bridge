@@ -66,10 +66,12 @@ Compose 的 shell 环境可能覆盖 `.env` 中的同名变量；部署前检查
 
 broker 使用 scratch 镜像和 UID/GID `65532:65532`，根文件系统只读，数据库写入 `bridge_data` 命名卷。首次创建的卷由镜像中的目录初始化；复用已有卷时需要核对所有权。只向 Compose 网络暴露 8080，管理地址仍为容器 loopback。
 
-Caddy 公开 80/443 并保存证书到 `caddy_data`。Caddyfile 仅代理健康检查与两个 WS 入口，其他路径返回 404。无需手写 Upgrade/Connection 转发头；Caddy 的 reverse proxy 支持 WebSocket。模板的 `stream_close_delay 5m` 仅延迟 reload 导致的连接关闭，A/B 仍必须支持重连。[Caddy streaming 文档](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#streaming)说明该行为。
+Caddy 公开 80/443 并保存证书到 `caddy_data`。Caddyfile 仅代理健康检查、两个 WS 入口和 `/setup/claude.md`、`/setup/client.md` 配置指南，其他路径返回 404。指南公开且不包含设备凭据，可将对应的完整 URL 交给 A 或 B 的 agent 配置本端。无需手写 Upgrade/Connection 转发头；Caddy 的 reverse proxy 支持 WebSocket。模板的 `stream_close_delay 5m` 仅延迟 reload 导致的连接关闭，A/B 仍必须支持重连。[Caddy streaming 文档](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#streaming)说明该行为。
 
 ```sh
 curl --fail https://bridge.example.com/readyz
+curl --fail https://bridge.example.com/setup/claude.md
+curl --fail https://bridge.example.com/setup/client.md
 docker compose --env-file deploy/.env -f deploy/compose.yaml exec caddy \
   caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 docker compose --env-file deploy/.env -f deploy/compose.yaml exec caddy \

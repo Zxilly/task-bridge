@@ -31,6 +31,7 @@ func bearer(r *http.Request) string {
 }
 func NewHandler(b *broker.Broker) http.Handler {
 	mux := http.NewServeMux()
+	registerSetupGuides(mux)
 	auth := func(r *http.Request) (model.Principal, error) { return b.Authenticate(r.Context(), bearer(r)) }
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -78,7 +79,7 @@ func NewAdminHandler(b *broker.Broker, token string) http.Handler {
 			_ = json.NewEncoder(w).Encode(model.ErrorResult{Error: model.AsError(e)})
 			return
 		}
-		_ = json.NewEncoder(w).Encode(model.AdminResponse[any]{Result: out})
+		_ = json.NewEncoder(w).Encode(model.AdminResponse[model.AdminResult]{Result: out})
 	})
 	registry := prometheus.NewRegistry()
 	registry.MustRegister(prometheus.NewGoCollector(), prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))

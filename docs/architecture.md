@@ -36,6 +36,7 @@ flowchart LR
 | `/mcp/agent` | A 的远程 WebSocket MCP | Claude 设备 token |
 | `/v1/client` | B 的版本化 JSON 控制协议 | executor 设备 token |
 | `/healthz`、`/readyz` | 进程与数据库探针 | 无设备凭据 |
+| `/setup/claude.md`、`/setup/client.md` | A/B agent 自配置指南 | 公开静态文档，不包含凭据 |
 | 独立的 `admin_listen` | 设备、任务、备份等本机管理 | 管理 token |
 
 A 的 transport 是 Claude 支持的远程 WebSocket MCP，自定义适配只负责 JSON-RPC 消息传输，不自行实现 MCP 工具协议。它不等同于 MCP 标准 Streamable HTTP。
@@ -79,7 +80,7 @@ channel 通知没有业务 ACK，`offered` 与 `running` 分开。长任务不�
 
 ## 执行边界
 
-每条命令使用独立 Bash 进程，不保存 shell 工作目录或环境。B 解析相对 cwd 并检查 workspace 根目录范围。环境透传和超时由本地配置控制。进程树终止与 Windows 路径转换依赖平台实现，验证状态单独记录。
+每条命令使用独立 Bash 进程，不保存 shell 工作目录或环境。B 解析相对 cwd 并检查 workspace 根目录范围。环境透传和超时由本地配置控制。Linux 使用进程组终止命令；Windows 以挂起状态创建 Bash，绑定独立 Job Object 并持久记录 PID 后才恢复执行，取消时终止整个 Job。Job 句柄不传给子进程，客户端退出时系统同时终止该 Job 中的进程。进程终止不能证明先前没有副作用；缺少持久终态的崩溃执行仍按 unknown 恢复。Windows 路径转换依赖平台实现，验证状态单独记录。
 
 工作区路径检查不阻止 Bash 自身访问该账号有权访问的其他资源。面向不互信用户时，需要额外的容器或操作系统隔离；本版定位为单个所有者的设备协作。
 
