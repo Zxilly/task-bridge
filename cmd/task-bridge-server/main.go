@@ -30,7 +30,7 @@ func main() {
 }
 func command() *cobra.Command {
 	var config string
-	root := &cobra.Command{Use: "bridge-server", Short: "Self-hosted Claude task and remote Bash broker", Version: model.Version, SilenceUsage: true, SilenceErrors: true}
+	root := &cobra.Command{Use: "task-bridge-server", Short: "Self-hosted Claude task and remote Bash broker", Version: model.Version, SilenceUsage: true, SilenceErrors: true}
 	root.PersistentFlags().StringVar(&config, "config", "server.json", "Server configuration JSON")
 	root.AddCommand(&cobra.Command{Use: "serve", Short: "Run the broker", RunE: func(cmd *cobra.Command, _ []string) error {
 		cfg, e := server.LoadConfig(config)

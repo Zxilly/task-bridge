@@ -18,11 +18,11 @@ func TestBuiltClientStdioAndHostEOF(t *testing.T) {
 	f := setup(t)
 	f.stopB()
 	dir := t.TempDir()
-	binary := filepath.Join(dir, "bridge-client")
+	binary := filepath.Join(dir, "task-bridge-client")
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
 	}
-	build := exec.CommandContext(f.ctx, "go", "build", "-o", binary, "./cmd/bridge-client")
+	build := exec.CommandContext(f.ctx, "go", "build", "-o", binary, "./cmd/task-bridge-client")
 	build.Dir = filepath.Join("..", "..")
 	if output, e := build.CombinedOutput(); e != nil {
 		t.Fatalf("build actual client CLI: %v\n%s", e, output)
@@ -117,11 +117,11 @@ func TestClientProcessCrashReportsUnknownAndNeverReexecutes(t *testing.T) {
 	f := setup(t)
 	f.stopB()
 	dir := t.TempDir()
-	binary := filepath.Join(dir, "bridge-client")
+	binary := filepath.Join(dir, "task-bridge-client")
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
 	}
-	build := exec.CommandContext(f.ctx, "go", "build", "-o", binary, "./cmd/bridge-client")
+	build := exec.CommandContext(f.ctx, "go", "build", "-o", binary, "./cmd/task-bridge-client")
 	build.Dir = filepath.Join("..", "..")
 	if data, e := build.CombinedOutput(); e != nil {
 		t.Fatalf("build client: %v %s", e, data)

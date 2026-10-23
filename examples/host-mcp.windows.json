@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "bridge-tasks": {
-      "command": "C:\\Bridge\\bridge-client.exe",
+      "command": "C:\\Bridge\\task-bridge-client.exe",
       "args": [
         "mcp",
         "--config",

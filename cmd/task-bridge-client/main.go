@@ -28,7 +28,7 @@ func main() {
 	}
 }
 func command() *cobra.Command {
-	root := &cobra.Command{Use: "bridge-client", Short: "Local MCP task client and Bash executor", Version: model.Version, SilenceUsage: true, SilenceErrors: true}
+	root := &cobra.Command{Use: "task-bridge-client", Short: "Local MCP task client and Bash executor", Version: model.Version, SilenceUsage: true, SilenceErrors: true}
 	var configPath string
 	root.PersistentFlags().StringVar(&configPath, "config", "client.json", "Client JSON configuration path")
 	root.AddCommand(&cobra.Command{Use: "mcp", Short: "Serve task tools over stdio and connect to the broker", RunE: func(cmd *cobra.Command, args []string) error {

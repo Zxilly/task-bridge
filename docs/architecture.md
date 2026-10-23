@@ -5,9 +5,9 @@
 ```mermaid
 flowchart LR
     A[Claude Code A] <-->|MCP over WSS| C[Caddy]
-    C <--> S[bridge-server]
+    C <--> S[task-bridge-server]
     S <--> DB[(SQLite WAL)]
-    B[bridge-client] <-->|控制协议 over WSS| C
+    B[task-bridge-client] <-->|控制协议 over WSS| C
     H[MCP 宿主] <-->|stdio MCP| B
     B <--> J[(本地 journal)]
     B --> E[Bash 与子进程]

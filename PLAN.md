@@ -1,10 +1,10 @@
-# Claude Task Bridge：自托管 Go 实施计划
+# Task Bridge：自托管 Go 实施计划
 
 日期：2026-10-23
 
 状态：已转为 Go 实现，已完成本轮实现与自动化验证；实际状态以 [验证记录](docs/compatibility.md) 为准。真实 Claude 按用户选择延期验收；目标生产部署/TLS 与实际拟用宿主仍待现场验收。
 
-暂定项目名：`claude-task-bridge`。
+项目名：Task Bridge（`task-bridge`）。
 
 ## 1. 目标与已经确定的边界
 
@@ -118,10 +118,10 @@ WebSocket MCP 是 Claude 支持的自定义 transport，不把它称为 MCP 标�
 | 部署 | Docker Compose + Caddy | 单实例 Go broker、非 root、本地 SQLite |
 
 ```text
-claude-task-bridge/
+task-bridge/
   cmd/
-    bridge-server/
-    bridge-client/
+    task-bridge-server/
+    task-bridge-client/
   internal/
     model/
     storage/migrations/
@@ -572,26 +572,26 @@ unknown 不能成为永久占据工作区且无法处理的死路。提供受管
 
 提供两份发布包：
 
-- `bridge-server`：启动服务、配置检查、设备管理、迁移、备份和恢复。
-- `bridge-client`：B 的 stdio MCP 服务、连接检查和本地执行器。
+- `task-bridge-server`：启动服务、配置检查、设备管理、迁移、备份和恢复。
+- `task-bridge-client`：B 的 stdio MCP 服务、连接检查和本地执行器。
 
 计划中的命令形态：
 
 ```text
-bridge-server serve --config server.json
-bridge-server admin devices create --kind claude --workspace <id>
-bridge-server admin devices create --kind executor
-bridge-server admin devices revoke <id>
-bridge-server admin tasks inspect <task_id>
-bridge-server admin commands resolve <command_id> --outcome <verified-outcome> --reason <text>
-bridge-server admin tasks abandon <task_id> --reason <text>
-bridge-server admin workspaces release <workspace_id> --reason <verified-stopped-evidence>
-bridge-server admin backup --output <path>
-bridge-server migrate --config server.json
+task-bridge-server serve --config server.json
+task-bridge-server admin devices create --kind claude --workspace <id>
+task-bridge-server admin devices create --kind executor
+task-bridge-server admin devices revoke <id>
+task-bridge-server admin tasks inspect <task_id>
+task-bridge-server admin commands resolve <command_id> --outcome <verified-outcome> --reason <text>
+task-bridge-server admin tasks abandon <task_id> --reason <text>
+task-bridge-server admin workspaces release <workspace_id> --reason <verified-stopped-evidence>
+task-bridge-server admin backup --output <path>
+task-bridge-server migrate --config server.json
 
-bridge-client mcp --config client.json
-bridge-client doctor --config client.json
-bridge-client reconcile --config client.json --reason <reviewed-evidence>
+task-bridge-client mcp --config client.json
+task-bridge-client doctor --config client.json
+task-bridge-client reconcile --config client.json --reason <reviewed-evidence>
 ```
 
 运行中的 admin 命令通过受保护的本机管理通道访问 broker，使吊销等操作立即影响内存连接。离线迁移/恢复时要求 broker 停止，避免不受控的第二写进程。
@@ -600,7 +600,7 @@ B 配置包括：服务端 URL、凭据来源、executor ID、本地 journal 路
 
 `doctor` 输出配置和依赖是否满足、服务端是否可达、Shell profile、工作区是否有效，不打印 token 或完整环境。主动执行 Shell 探针属于显式诊断模式，普通配置检查不修改工作区。
 
-`bridge-client mcp` 生命周期默认跟随宿主。宿主关闭或 stdin EOF 时停止新任务并清理执行进程；如果要求宿主退出后仍继续运行，需要后续拆分 daemon 与 stdio adapter。
+`task-bridge-client mcp` 生命周期默认跟随宿主。宿主关闭或 stdin EOF 时停止新任务并清理执行进程；如果要求宿主退出后仍继续运行，需要后续拆分 daemon 与 stdio adapter。
 
 ## 15. 服务器部署与维护
 
@@ -642,7 +642,7 @@ Caddy 配置要允许 WebSocket upgrade，并通过 reload/超时测试。代理
 1. 冻结派发、断开旧连接，将恢复后的所有未完成任务（包括备份时仍 queued 的任务）标记为 interrupted 并隔离工作区；不得直接重放旧 outbox。
 2. 生成全新的 server_epoch 和消息流 stream_id，废止旧 connection generation 与 ACK 游标，防止客户端把恢复后重新生成的序号当作旧消息丢弃。
 3. 默认废止从备份恢复出的全部设备 token，并重新签发，避免复活备份之后已经吊销的凭据。
-4. B 保留本地 journal。停止 B 后，用新凭据运行 `bridge-client reconcile --config client.json --reason <核对证据>`；逐批比对原执行指纹，归档原 pending/unknown 证据与 orphan，再原子切换本地 epoch。已知结果补传，快照中不存在的命令只保留证据，不重建可执行工作。隔离仍需管理员另行核实解除。
+4. B 保留本地 journal。停止 B 后，用新凭据运行 `task-bridge-client reconcile --config client.json --reason <核对证据>`；逐批比对原执行指纹，归档原 pending/unknown 证据与 orphan，再原子切换本地 epoch。已知结果补传，快照中不存在的命令只保留证据，不重建可执行工作。隔离仍需管理员另行核实解除。
 5. 对去重历史已不完整的任务保留不确定性，不能把“服务器没有记录”理解为命令没有执行过。
 
 普通进程重启保持原 server_epoch/持久消息流；只有数据回滚或显式恢复才进入上述流程。恢复出的旧 queued 任务没有原 assignment，需管理员 abandon 后按需重新提交；不能通过 task_resume 自动重跑。

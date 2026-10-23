@@ -1,10 +1,10 @@
 version: 2
-project_name: claude-task-bridge
+project_name: task-bridge
 
 builds:
   - id: server
-    main: ./cmd/bridge-server
-    binary: bridge-server
+    main: ./cmd/task-bridge-server
+    binary: task-bridge-server
     env:
       - CGO_ENABLED=0
     goos: [linux, windows]
@@ -12,8 +12,8 @@ builds:
     flags: [-trimpath]
     ldflags: [-s -w]
   - id: client
-    main: ./cmd/bridge-client
-    binary: bridge-client
+    main: ./cmd/task-bridge-client
+    binary: task-bridge-client
     env:
       - CGO_ENABLED=0
     goos: [linux, windows]

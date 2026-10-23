@@ -115,6 +115,6 @@ cwd 检查覆盖配置工作区路径与符号链接解析，但不是操作系�
 
 ## 旧快照恢复
 
-恢复后服务端刷新 epoch 并禁用恢复出的设备凭据，B 的普通 MCP 连接发现 epoch 变化会停止自动连接并保留 journal。提供 `bridge-client reconcile --config client.json --reason "实际核对证据"` 进行显式核对：需停止原 B 并使用新 token，全部批次确认后原子归档证据并切换本地 epoch。已知终态可以核对采纳；unknown 原始证据和 orphan 记录保留审计。该命令不执行或确认 dispatch，不杀旧 PID，也不解除工作区隔离。
+恢复后服务端刷新 epoch 并禁用恢复出的设备凭据，B 的普通 MCP 连接发现 epoch 变化会停止自动连接并保留 journal。提供 `task-bridge-client reconcile --config client.json --reason "实际核对证据"` 进行显式核对：需停止原 B 并使用新 token，全部批次确认后原子归档证据并切换本地 epoch。已知终态可以核对采纳；unknown 原始证据和 orphan 记录保留审计。该命令不执行或确认 dispatch，不杀旧 PID，也不解除工作区隔离。
 
 快照中原 queued 任务没有 assignment，恢复后采用管理员审查、abandon、release 后按需重新提交的保守流程。代码与自动化测试不能代替目标服务器上的完整旧快照恢复演练，不应据此宣称已验证 RPO/RTO。

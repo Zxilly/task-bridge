@@ -170,6 +170,6 @@ B 在真正启动前调用 `command_authorize`，核验当前 assignment、租�
 
 普通 broker 重启不变更 server epoch；恢复旧备份刷新 epoch 并废止设备 token。所有未完成任务（包括备份中的 queued）进入 interrupted，工作区隔离，未决命令进入 unknown，旧 outbox/游标清除。B 的普通 MCP 连接发现 epoch 变化会停止自动连接并保留原 journal，必须先核对，不能通过删除 journal 绕过未知执行记录。
 
-显式 `bridge-client reconcile` 独占 journal，使用有效 executor 凭据通过 `executor_reconcile` 分批交换证据。全部批次确认后，本地原子归档旧 pending/unknown 信息、保留输出并切换 epoch，下一次 MCP 连接补传匹配命令的证据。服务端返回的明确终态可在显式核对时采用，同时归档原 unknown 证据。服务端没有记录的 orphan 仅保留审计，不自动重建派发；工作区仍需单独审查解除隔离。此连接不执行或 ACK dispatch。
+显式 `task-bridge-client reconcile` 独占 journal，使用有效 executor 凭据通过 `executor_reconcile` 分批交换证据。全部批次确认后，本地原子归档旧 pending/unknown 信息、保留输出并切换 epoch，下一次 MCP 连接补传匹配命令的证据。服务端返回的明确终态可在显式核对时采用，同时归档原 unknown 证据。服务端没有记录的 orphan 仅保留审计，不自动重建派发；工作区仍需单独审查解除隔离。此连接不执行或 ACK dispatch。
 
 旧 queued 任务缺少 assignment，核对后采用管理员 abandon、release、按需重新提交的流程，不自动 requeue。完整运维步骤与实际验证范围见 [operations.md](operations.md) 与 [compatibility.md](compatibility.md)。

@@ -16,8 +16,8 @@
 | `max_database_bytes` | 数据库及 WAL 的分配字节上限，默认 2 GiB，至少 32 MiB |
 
 ```sh
-bin/bridge-server serve --config server.json
-bin/bridge-server healthcheck --url http://127.0.0.1:8080/readyz
+bin/task-bridge-server serve --config server.json
+bin/task-bridge-server healthcheck --url http://127.0.0.1:8080/readyz
 ```
 
 `/healthz` 判断进程是否存活，`/readyz` 判断服务是否可以接收工作。监控使用独立探针，不将已有 WebSocket 连接数量当作 readiness。停止服务端会中断当前连接与等待请求；调用者以业务 ID 查询状态。
@@ -37,9 +37,9 @@ Hello 只报告当前配置中的工作区。设备可以连接其授权工作�
 `max_output_bytes` 默认每条命令保存 10 MiB，最大可设 50 MiB。`max_journal_bytes` 默认 1 GiB，至少 32 MiB，按 journal 数据库及 WAL 分配字节计算。接近容量上限时拒绝新执行或停止继续收集输出，保留终态写入空间；已经记录的去重和未知结果不能通过清空 journal 来释放。
 
 ```sh
-bin/bridge-client doctor --config client.json
-bin/bridge-client doctor --connect --config client.json
-bin/bridge-client mcp --config client.json
+bin/task-bridge-client doctor --config client.json
+bin/task-bridge-client doctor --connect --config client.json
+bin/task-bridge-client mcp --config client.json
 ```
 
 普通 doctor 检查本地配置和依赖；`--connect` 只主动探测 TCP/TLS 可达性，不发送认证握手或注册 executor，不能用它证明 token 已被服务端接受。两种模式都不打印 token。stdio 运行时 stdout 只包含 MCP JSON-RPC，日志位于 stderr。客户端生命周期跟随宿主；关闭宿主或 stdin EOF 会触发清理，不作为后台 daemon 使用。
@@ -60,6 +60,8 @@ docker compose --env-file deploy/.env -f deploy/compose.yaml up --build -d
 docker compose --env-file deploy/.env -f deploy/compose.yaml ps
 ```
 
+如果已用旧模板部署，在后续 Compose 命令中使用 `docker compose -p <existing-project> ...`，将 `<existing-project>` 替换为原 project 名称，以复用已有命名卷。产品改名本身不迁移数据库或 Caddy 证书。
+
 Compose 的 shell 环境可能覆盖 `.env` 中的同名变量；部署前检查实际环境。不要把包含凭据的完整 `docker compose config` 输出复制到日志或工单。[Docker 的环境变量优先级](https://docs.docker.com/compose/how-tos/environment-variables/envvars-precedence/)解释了加载规则。
 
 broker 使用 scratch 镜像和 UID/GID `65532:65532`，根文件系统只读，数据库写入 `bridge_data` 命名卷。首次创建的卷由镜像中的目录初始化；复用已有卷时需要核对所有权。只向 Compose 网络暴露 8080，管理地址仍为容器 loopback。
@@ -78,14 +80,14 @@ docker compose --env-file deploy/.env -f deploy/compose.yaml exec caddy \
 
 ## 设备与恢复管理
 
-以下命令由管理凭据授权。容器部署时，将 `bin/bridge-server admin --config server.json` 替换为 `docker compose --env-file deploy/.env -f deploy/compose.yaml exec broker /bridge-server admin --config /etc/bridge/server.json`。
+以下命令由管理凭据授权。容器部署时，将 `bin/task-bridge-server admin --config server.json` 替换为 `docker compose --env-file deploy/.env -f deploy/compose.yaml exec broker /task-bridge-server admin --config /etc/bridge/server.json`。
 
 ```sh
-bin/bridge-server admin --config server.json workspaces create --id demo --executor laptop
-bin/bridge-server admin --config server.json devices create --kind executor --executor laptop --workspace demo
-bin/bridge-server admin --config server.json devices create --kind claude --agent claude-demo --workspace demo
-bin/bridge-server admin --config server.json devices revoke PRINCIPAL_ID
-bin/bridge-server admin --config server.json tasks inspect TASK_ID
+bin/task-bridge-server admin --config server.json workspaces create --id demo --executor laptop
+bin/task-bridge-server admin --config server.json devices create --kind executor --executor laptop --workspace demo
+bin/task-bridge-server admin --config server.json devices create --kind claude --agent claude-demo --workspace demo
+bin/task-bridge-server admin --config server.json devices revoke PRINCIPAL_ID
+bin/task-bridge-server admin --config server.json tasks inspect TASK_ID
 ```
 
 执行不明的任务先检查服务端命令记录、B journal 和现场进程。保留证据后使用 `commands resolve` 记录核对结论，或通过 `tasks abandon` 结束追踪。`workspaces release` 是独立动作，只有确认旧进程已结束或环境已重新隔离后执行。使用 `--help` 查看当前命令接受的 outcome 与必需理由，不把 unknown 直接当成成功。
@@ -94,13 +96,13 @@ bin/bridge-server admin --config server.json tasks inspect TASK_ID
 
 ### 更换遗失或退役的 B journal
 
-服务端持久绑定 executor 与 journal 的 stream ID。普通 MCP 连接若报告不同 journal，会返回 `journal_mismatch` 并停止自动重连。原 journal 仍在时，使用原文件；服务端快照回滚的证据核对使用下文的 `bridge-client reconcile`。
+服务端持久绑定 executor 与 journal 的 stream ID。普通 MCP 连接若报告不同 journal，会返回 `journal_mismatch` 并停止自动重连。原 journal 仍在时，使用原文件；服务端快照回滚的证据核对使用下文的 `task-bridge-client reconcile`。
 
 只有在 B 已离线、管理员已核实旧执行停止，且该 executor 没有未决或 unknown 命令时，才使用管理命令重置 journal 绑定：
 
 ```sh
-bin/bridge-server admin --config server.json executors reset-journal laptop --reason "填写已核实旧执行全部停止的证据"
-bin/bridge-server admin --config server.json devices create --kind executor --executor laptop --workspace demo
+bin/task-bridge-server admin --config server.json executors reset-journal laptop --reason "填写已核实旧执行全部停止的证据"
+bin/task-bridge-server admin --config server.json devices create --kind executor --executor laptop --workspace demo
 ```
 
 reset-journal 清除旧 stream 绑定、吊销该 executor 的全部旧 B token，并保存审计理由；之后使用新 token 和新 journal 路径重新接入。它不解除工作区隔离，也不把 unknown 当成未执行。保留尚可取得的旧 journal 和核对证据。
@@ -114,7 +116,7 @@ reconcile 的用途是核对保留的原 journal 并跨服务端 epoch 迁移证
 实现使用 SQLite `VACUUM INTO` 生成一致快照；`--output` 是 broker 本机路径，必须是尚不存在的新文件，不能覆盖正在运行的数据库或既有备份。
 
 ```sh
-bin/bridge-server admin --config server.json backup --output /absolute/path/to/bridge-backup.db
+bin/task-bridge-server admin --config server.json backup --output /absolute/path/to/bridge-backup.db
 ```
 
 容器内的可写路径在 `/data`。执行备份后用 `docker compose cp` 将文件导出，后续按日期或版本保存，避免下一次备份覆盖唯一可恢复副本。
@@ -122,8 +124,8 @@ bin/bridge-server admin --config server.json backup --output /absolute/path/to/b
 升级前完成备份，停止 broker，替换二进制或重建镜像，运行迁移并重新启动：
 
 ```sh
-bin/bridge-server migrate --config server.json
-bin/bridge-server serve --config server.json
+bin/task-bridge-server migrate --config server.json
+bin/task-bridge-server serve --config server.json
 ```
 
 迁移使用数据库锁，要求没有另一个服务端写同一数据库。不提供自动 down migration；回退旧程序前先确认数据库版本兼容，必要时从已验证的备份恢复。
@@ -131,8 +133,8 @@ bin/bridge-server serve --config server.json
 恢复需要停止 broker，并保留当前数据库、WAL/SHM 与 B journal。复制一份配置为 `server.restore.json`，把其中 `database` 改为新路径，例如 `./restored/bridge.db`。目标数据库文件必须尚不存在；restore 不覆盖现有数据库：
 
 ```sh
-bin/bridge-server restore --config server.restore.json --input /absolute/path/to/bridge-backup.db
-bin/bridge-server serve --config server.restore.json
+bin/task-bridge-server restore --config server.restore.json --input /absolute/path/to/bridge-backup.db
+bin/task-bridge-server serve --config server.restore.json
 ```
 
 restore 先将备份复制到临时文件并执行 integrity check，刷新 server epoch，禁用恢复出的全部设备 token，将所有未完成任务（包含 queued）置为 interrupted、隔离对应工作区，将未决命令置为 unknown，并清除旧 outbox/游标，再将文件移动到尚不存在的新目标。需要时让服务配置指向这个已恢复路径；不要手动覆盖旧库。备份中的 queued 任务不会自动再次排队。
@@ -146,8 +148,8 @@ restore 先将备份复制到临时文件并执行 integrity check，刷新 serv
 5. 管理员检查仍然 unknown 的命令与隔离工作区，必要时记录 resolution/abandon，再单独 release。对账本身不解除隔离。
 
 ```sh
-bin/bridge-client reconcile --config client.json --reason "填写已经核实的恢复证据"
-bin/bridge-client mcp --config client.json
+bin/task-bridge-client reconcile --config client.json --reason "填写已经核实的恢复证据"
+bin/task-bridge-client mcp --config client.json
 ```
 
 reconcile 不执行命令，不确认派发，也不自动重跑旧任务。中途失败时保留原 epoch 与待发送记录，检查原因后用同一 journal 重试。恢复后“服务端没有命令记录”不能证明 B 没有执行过。

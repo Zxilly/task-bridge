@@ -1,8 +1,8 @@
-name: claude-task-bridge
+name: task-bridge
 
 services:
   broker:
-    image: ${BRIDGE_IMAGE:-claude-task-bridge:0.1.0-local}
+    image: ${BRIDGE_IMAGE:-task-bridge:0.1.0-local}
     build:
       context: ..
       dockerfile: deploy/Dockerfile
