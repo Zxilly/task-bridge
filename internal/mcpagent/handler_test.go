@@ -22,17 +22,13 @@ type observedCall struct {
 	connectionID, name string
 	args               json.RawMessage
 }
-type fakeToolResult struct {
-	OK   bool   `json:"ok"`
-	Name string `json:"name,omitempty"`
-}
 type fakeService struct {
 	connected    chan string
 	disconnected chan string
 	calls        chan observedCall
 	notification *model.ChannelNotification
 	connectErr   error
-	call         func(context.Context, string, json.RawMessage) (any, error)
+	call         func(context.Context, string, json.RawMessage) (model.AgentResult, error)
 	closers      sync.Map
 }
 
@@ -58,12 +54,12 @@ func (s *fakeService) AgentConnected(ctx context.Context, p model.Principal, cid
 	return nil
 }
 func (s *fakeService) AgentDisconnected(p model.Principal, cid string) { s.disconnected <- cid }
-func (s *fakeService) CallAgent(ctx context.Context, p model.Principal, cid, name string, args json.RawMessage) (any, error) {
+func (s *fakeService) CallAgent(ctx context.Context, p model.Principal, cid, name string, args json.RawMessage) (model.AgentResult, error) {
 	s.calls <- observedCall{p, cid, name, args}
 	if s.call != nil {
 		return s.call(ctx, name, args)
 	}
-	return fakeToolResult{OK: true, Name: name}, nil
+	return model.Task{ID: "test-task", State: "running"}, nil
 }
 
 func testServer(t *testing.T, service *fakeService) *httptest.Server {
@@ -351,7 +347,7 @@ func TestMCPCallCancellationOnlyCancelsWaitContext(t *testing.T) {
 	started := make(chan struct{})
 	cancelled := make(chan struct{})
 	var once sync.Once
-	s.call = func(ctx context.Context, name string, args json.RawMessage) (any, error) {
+	s.call = func(ctx context.Context, name string, args json.RawMessage) (model.AgentResult, error) {
 		once.Do(func() { close(started) })
 		<-ctx.Done()
 		close(cancelled)
@@ -490,9 +486,9 @@ func TestConcurrentToolLimitAndCancelledWaitReleaseSlots(t *testing.T) {
 	s := newFake()
 	started := make(chan struct{}, 64)
 	stopped := make(chan struct{}, 64)
-	s.call = func(ctx context.Context, name string, _ json.RawMessage) (any, error) {
+	s.call = func(ctx context.Context, name string, _ json.RawMessage) (model.AgentResult, error) {
 		if name != "command_wait" {
-			return fakeToolResult{OK: true}, nil
+			return model.Task{ID: "test-task", State: "running"}, nil
 		}
 		started <- struct{}{}
 		<-ctx.Done()

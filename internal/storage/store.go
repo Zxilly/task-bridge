@@ -357,17 +357,17 @@ func (t *Tx) BytePage(command string, cursor int64) ([]model.Chunk, []int64, err
 	}
 	return chunks, offsets, r.Err()
 }
-func (t *Tx) Event(task, kind string, payload any) error {
+func (t *Tx) Event(task, kind string, payload model.EventPayload) error {
 	_, e := t.ExecContext(t.ctx, "INSERT INTO events(task,type,payload,created) VALUES(?,?,?,?)", task, kind, model.JSON(payload), model.Now())
 	return e
 }
-func (t *Tx) Events(task string, after int64, limit int) ([]model.Event, error) {
+func (t *Tx) Events(task string, after int64, limit int) (model.EventList, error) {
 	r, e := t.QueryContext(t.ctx, "SELECT seq,type,payload,created FROM events WHERE task=? AND seq>? ORDER BY seq LIMIT ?", task, after, limit)
 	if e != nil {
 		return nil, e
 	}
 	defer r.Close()
-	out := []model.Event{}
+	out := model.EventList{}
 	for r.Next() {
 		v := model.Event{TaskID: task}
 		if e = r.Scan(&v.Seq, &v.Type, &v.Payload, &v.CreatedAt); e != nil {
@@ -377,7 +377,7 @@ func (t *Tx) Events(task string, after int64, limit int) ([]model.Event, error) 
 	}
 	return out, r.Err()
 }
-func (t *Tx) Enqueue(peer, kind string, payload any) error {
+func (t *Tx) Enqueue(peer, kind string, payload model.OutboxPayload) error {
 	_, e := t.ExecContext(t.ctx, "INSERT INTO outbox(peer,message_id,type,payload) VALUES(?,?,?,?)", peer, uuid.NewString(), kind, model.JSON(payload))
 	return e
 }

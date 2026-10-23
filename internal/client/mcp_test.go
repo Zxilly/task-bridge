@@ -303,7 +303,7 @@ func TestClientMCPGenericToolsBoundResultsAndErrors(t *testing.T) {
 			return model.Envelope{Error: &model.Error{Code: "busy", Message: "retry cancel", Retryable: true}}
 		}
 		task := model.Task{ID: "task-1", Summary: strings.Repeat("\x00", 4700)}
-		var value any
+		var value model.ClientResult
 		switch rpc.Method {
 		case "tasks_submit":
 			value = task
@@ -314,14 +314,14 @@ func TestClientMCPGenericToolsBoundResultsAndErrors(t *testing.T) {
 		case "tasks_list":
 			value = model.TaskListResult{Tasks: []model.Task{task}}
 		case "tasks_events":
-			value = []model.Event{{TaskID: task.ID, Payload: model.JSON(clientValueFixture{Value: task.Summary})}}
+			value = model.EventList{{TaskID: task.ID, Payload: model.JSON(clientValueFixture{Value: task.Summary})}}
 		}
 		return model.Envelope{Payload: model.JSON(value)}
 	})
 	session := clientMCPTestSession(t, ctx, c, nil)
 	for _, tc := range []struct {
 		name string
-		args any
+		args model.ClientRequest
 		code string
 		id   string
 	}{
@@ -417,7 +417,7 @@ func TestClientMCPProgressOnlyForWaitAndRunWithValidToken(t *testing.T) {
 		{"tasks_wait", strings.Repeat("界", 67), false},
 		{"tasks_wait", "", true},
 	} {
-		args := any(WaitArgs{TaskID: "task-1", WaitMS: 1})
+		var args model.ClientRequest = WaitArgs{TaskID: "task-1", WaitMS: 1}
 		if tc.name == "tasks_run" {
 			args = RunArgs{WorkspaceID: "local", Prompt: "work", IdempotencyKey: "task-1", WaitMS: 1}
 		} else if tc.name == "tasks_get" {

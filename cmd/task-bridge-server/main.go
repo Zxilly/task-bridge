@@ -86,7 +86,7 @@ func command() *cobra.Command {
 	root.AddCommand(health)
 	admin := &cobra.Command{Use: "admin", Short: "Manage the running broker over its authenticated loopback API"}
 	root.AddCommand(admin)
-	call := func(cmd *cobra.Command, method string, args any) error {
+	call := func(cmd *cobra.Command, method string, args model.AdminRequestArgs) error {
 		cfg, e := server.LoadConfig(config)
 		if e != nil {
 			return e
@@ -115,7 +115,7 @@ func command() *cobra.Command {
 	create.Flags().StringVar(&executor, "executor", "", "Stable B executor ID")
 	create.Flags().StringVar(&workspace, "workspace", "", "Bound workspace ID")
 	create.Flags().StringVar(&agent, "agent", "", "Stable Claude slot ID")
-	devices.AddCommand(create, &cobra.Command{Use: "list", RunE: func(cmd *cobra.Command, _ []string) error { return call(cmd, "devices.list", struct{}{}) }}, &cobra.Command{Use: "revoke ID", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	devices.AddCommand(create, &cobra.Command{Use: "list", RunE: func(cmd *cobra.Command, _ []string) error { return call(cmd, "devices.list", model.AdminArgs{}) }}, &cobra.Command{Use: "revoke ID", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		return call(cmd, "devices.revoke", model.AdminArgs{ID: args[0]})
 	}})
 	workspaces := &cobra.Command{Use: "workspaces"}
@@ -167,7 +167,7 @@ func command() *cobra.Command {
 	admin.AddCommand(backup)
 	return root
 }
-func adminCall(ctx context.Context, cfg server.Config, token, method string, args any, out io.Writer) error {
+func adminCall(ctx context.Context, cfg server.Config, token, method string, args model.AdminRequestArgs, out io.Writer) error {
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 	body := model.JSON(model.RPC{Method: method, Args: model.JSON(args)})

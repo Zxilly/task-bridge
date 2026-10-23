@@ -95,8 +95,8 @@ func waitLoadConnections(t *testing.T, f *fixture, agents, executors int) {
 
 func loadSubmit(t *testing.T, ctx context.Context, p *loadPeer, key, prompt string) model.Task {
 	t.Helper()
-	raw, err := p.b.RPC(ctx, "tasks_submit", map[string]any{
-		"workspace_id": p.workspaceID, "idempotency_key": key, "prompt": prompt, "deadline_ms": 60000,
+	raw, err := p.b.RPC(ctx, model.TaskSubmitArgs{
+		WorkspaceID: p.workspaceID, IdempotencyKey: key, Prompt: prompt, DeadlineMS: 60000,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -219,7 +219,7 @@ func TestSmallScaleFiveAgentsTenExecutors(t *testing.T) {
 	}
 	for i := range peers {
 		other := peers[(i+1)%len(peers)].task.ID
-		_, err := peers[i].b.RPC(f.ctx, "tasks_get", map[string]any{"task_id": other})
+		_, err := peers[i].b.RPC(f.ctx, model.TaskGetArgs{TaskID: other})
 		var denied *model.Error
 		if !errors.As(err, &denied) || denied.Code != "forbidden" {
 			t.Fatalf("B %d accessed another workspace: %v", i, err)

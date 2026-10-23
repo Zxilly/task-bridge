@@ -189,7 +189,7 @@ func Now() int64 { return time.Now().UTC().UnixMilli() }
 
 // AgentService keeps MCP transport independent of persistence and routing.
 type AgentService interface {
-	CallAgent(context.Context, Principal, string, string, json.RawMessage) (any, error)
+	CallAgent(context.Context, Principal, string, string, json.RawMessage) (AgentResult, error)
 	AgentConnected(context.Context, Principal, string, ChannelNotifier) error
 	AgentDisconnected(Principal, string)
 }

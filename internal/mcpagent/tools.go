@@ -138,6 +138,8 @@ func validProgressToken(token any) bool {
 	}
 }
 
+// toolResult is the JSON-to-MCP encoding boundary. Business operations return
+// model.AgentResult; this encoder also carries the shared error body.
 func toolResult(value any, err error) *mcp.CallToolResult {
 	isError := err != nil
 	if err != nil {

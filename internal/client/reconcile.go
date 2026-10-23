@@ -178,7 +178,7 @@ func reconcileRPC(ctx context.Context, conn *websocket.Conn, welcome model.Welco
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	id := uuid.NewString()
-	request := model.Envelope{Version: model.ProtocolVersion, Type: "rpc", RequestID: id, ServerEpoch: welcome.ServerEpoch, Generation: welcome.Generation, Payload: model.JSON(model.RPC{Method: "executor_reconcile", Args: model.JSON(args)})}
+	request := model.Envelope{Version: model.ProtocolVersion, Type: "rpc", RequestID: id, ServerEpoch: welcome.ServerEpoch, Generation: welcome.Generation, Payload: model.JSON(model.RPC{Method: args.Method(), Args: model.JSON(args)})}
 	if err := writeEnvelope(ctx, conn, request); err != nil {
 		return response, err
 	}

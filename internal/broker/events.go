@@ -268,7 +268,7 @@ func (b *Broker) RegisterAgentCloser(id string, close func()) {
 		b.closers[id] = close
 	}
 }
-func (b *Broker) Admin(ctx context.Context, method string, raw json.RawMessage) (any, error) {
+func (b *Broker) Admin(ctx context.Context, method string, raw json.RawMessage) (model.AdminResult, error) {
 	if method == "devices.create" {
 		var p model.Principal
 		if e := json.Unmarshal(raw, &p); e != nil {
@@ -296,12 +296,12 @@ func (b *Broker) Admin(ctx context.Context, method string, raw json.RawMessage) 
 	if method == "backup" {
 		return model.BackupResult{Output: a.Output}, b.Store.Backup(ctx, a.Output)
 	}
-	var out any
+	var out model.AdminResult
 	e := b.update(ctx, func(tx *storage.Tx) error {
 		switch method {
 		case "devices.list":
-			var e error
-			out, e = tx.Principals()
+			principals, e := tx.Principals()
+			out = model.PrincipalList(principals)
 			return e
 		case "executors.reset_journal":
 			if !bounded(a.Reason, 2048) {

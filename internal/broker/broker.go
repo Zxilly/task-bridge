@@ -584,7 +584,7 @@ func snapshot(tx *storage.Tx, t model.Task) (model.TaskSnapshot, error) {
 	}
 	return model.TaskSnapshot{Task: t, Commands: cs, CommandsTruncated: more}, nil
 }
-func (b *Broker) CallAgent(ctx context.Context, p model.Principal, cid, method string, raw json.RawMessage) (any, error) {
+func (b *Broker) CallAgent(ctx context.Context, p model.Principal, cid, method string, raw json.RawMessage) (model.AgentResult, error) {
 	if e := b.Check(ctx, p); e != nil {
 		return nil, e
 	}
@@ -595,7 +595,7 @@ func (b *Broker) CallAgent(ctx context.Context, p model.Principal, cid, method s
 	if e != nil {
 		return nil, e
 	}
-	var out any
+	var out model.AgentResult
 	var dispatched model.Command
 	if method == "command_wait" {
 		if a.WaitMS == 0 {
@@ -678,7 +678,7 @@ func (b *Broker) CallAgent(ctx context.Context, p model.Principal, cid, method s
 			if a.TimeoutMS == 0 {
 				a.TimeoutMS = 120000
 			}
-			h := storage.Hash(string(model.JSON([]any{a.Command, a.Cwd, a.TimeoutMS})))
+			h := storage.Hash(string(model.JSON(commandRequestKey{Command: a.Command, Cwd: a.Cwd, TimeoutMS: a.TimeoutMS})))
 			c, err := tx.CommandByKey(t.ID, a.OperationKey)
 			if err == nil {
 				if c.RequestHash != h {
@@ -810,7 +810,7 @@ func (b *Broker) CallAgent(ctx context.Context, p model.Principal, cid, method s
 	return out, nil
 }
 
-func (b *Broker) CallClient(ctx context.Context, c *ClientPeer, method string, raw json.RawMessage) (any, error) {
+func (b *Broker) CallClient(ctx context.Context, c *ClientPeer, method string, raw json.RawMessage) (model.ClientResult, error) {
 	p := c.Principal
 	if e := b.Check(ctx, p); e != nil {
 		return nil, e
@@ -844,7 +844,7 @@ func (b *Broker) CallClient(ctx context.Context, c *ClientPeer, method string, r
 		a.WaitMS = min(a.WaitMS, 60000)
 		return b.waitTask(ctx, p, a)
 	}
-	var out any
+	var out model.ClientResult
 	e = b.update(ctx, func(tx *storage.Tx) error {
 		if e := activePrincipal(tx, p); e != nil {
 			return e
@@ -962,7 +962,7 @@ func (b *Broker) submitTask(ctx context.Context, c *ClientPeer, a Args) (model.T
 		if a.DeadlineMS < 1000 || a.DeadlineMS > 86400000 {
 			return model.Err("invalid_arguments", "deadline_ms must be between 1000 and 86400000")
 		}
-		h := storage.Hash(string(model.JSON([]any{a.WorkspaceID, a.Prompt, a.DeadlineMS})))
+		h := storage.Hash(string(model.JSON(taskRequestKey{WorkspaceID: a.WorkspaceID, Prompt: a.Prompt, DeadlineMS: a.DeadlineMS})))
 		t, e := tx.TaskByKey(p.ID, a.IdempotencyKey)
 		if e == nil {
 			if t.RequestHash != h {

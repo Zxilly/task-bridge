@@ -26,7 +26,7 @@ func addClientResultBounds(server *mcp.Server, implementation *mcp.Implementatio
 			var taskID string
 			var includeServerInfo bool
 			if call, ok := req.(*mcp.CallToolRequest); ok && call.Params != nil {
-				taskID = clientTaskID(call.Params.Arguments)
+				taskID = clientJSONTaskID(call.Params.Arguments)
 				version, _ := call.Params.GetMeta()[mcp.MetaKeyProtocolVersion].(string)
 				includeServerInfo = version >= "2026-07-28"
 			}

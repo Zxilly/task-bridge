@@ -45,7 +45,7 @@ func LoadConfig(path string) (Config, error) {
 	if err = decoder.Decode(&cfg); err != nil {
 		return cfg, fmt.Errorf("client config: %w", err)
 	}
-	if err = decoder.Decode(new(any)); err != io.EOF {
+	if err = decoder.Decode(new(json.RawMessage)); err != io.EOF {
 		return cfg, errors.New("client config must contain one JSON object")
 	}
 	path, err = filepath.Abs(path)

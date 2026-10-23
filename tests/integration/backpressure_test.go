@@ -69,10 +69,10 @@ func TestSlowConsumerDisconnectPreservesAndReplaysUnacknowledgedOutbox(t *testin
 		return c, result
 	}
 	slow, _ := connect()
-	payload := map[string]string{"message": strings.Repeat("x", 32<<10)}
+	payload := model.Dispatch{WorkspaceID: "demo", Command: model.Command{ID: "backpressure-probe", Command: strings.Repeat("x", 32<<10)}}
 	if e = f.store.Update(f.ctx, func(tx *storage.Tx) error {
 		for n := 0; n < 100; n++ {
-			if e := tx.Enqueue("b1", "task.event", payload); e != nil {
+			if e := tx.Enqueue("b1", "command.dispatch", payload); e != nil {
 				return e
 			}
 		}
@@ -101,7 +101,7 @@ func TestSlowConsumerDisconnectPreservesAndReplaysUnacknowledgedOutbox(t *testin
 		if e = json.Unmarshal(data, &msg); e != nil {
 			t.Fatal(e)
 		}
-		if msg.Type != "task.event" {
+		if msg.Type != "command.dispatch" {
 			t.Fatalf("unexpected replay type %q", msg.Type)
 		}
 		seen[msg.ID] = true

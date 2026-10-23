@@ -43,6 +43,27 @@ func clientTestBash(t *testing.T) string {
 	return path
 }
 
+func TestRPCRejectsMissingAndOversizedRequestsBeforeConnecting(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, tc := range []struct {
+		name    string
+		request model.ClientRequest
+		message string
+	}{
+		{"nil interface", nil, "client request must not be nil"},
+		{"nil concrete request", (*model.TaskGetArgs)(nil), "client request must not be nil"},
+		{"oversized", model.TaskSubmitArgs{Prompt: strings.Repeat("x", model.MaxToolBytes)}, "tool arguments exceed limit"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var c Client
+			if _, err := c.RPC(ctx, tc.request); err == nil || err.Error() != tc.message {
+				t.Fatalf("invalid request reached connection handling: %v", err)
+			}
+		})
+	}
+}
+
 func TestRejectedCredentialsStopReconnectLoop(t *testing.T) {
 	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
 		t.Run(http.StatusText(status), func(t *testing.T) {

@@ -88,7 +88,7 @@ func (f *brokerFixture) workspace() model.Workspace {
 	}
 	return workspace
 }
-func (f *brokerFixture) agent(method string, args any) (any, error) {
+func (f *brokerFixture) agent(method string, args Args) (model.AgentResult, error) {
 	return f.b.CallAgent(f.ctx, f.claude, f.connectionID, method, model.JSON(args))
 }
 func (f *brokerFixture) running(key string) model.Task {

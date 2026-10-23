@@ -409,10 +409,13 @@ func (c *Client) receive(root context.Context, live *liveConnection, msg model.E
 	return nil
 }
 
-func (c *Client) RPC(ctx context.Context, method string, args any) (json.RawMessage, error) {
-	encoded, err := json.Marshal(args)
+func (c *Client) RPC(ctx context.Context, request model.ClientRequest) (json.RawMessage, error) {
+	encoded, err := json.Marshal(request)
 	if err != nil {
 		return nil, err
+	}
+	if string(encoded) == "null" {
+		return nil, errors.New("client request must not be nil")
 	}
 	if len(encoded) > model.MaxToolBytes {
 		return nil, errors.New("tool arguments exceed limit")
@@ -448,7 +451,7 @@ func (c *Client) RPC(ctx context.Context, method string, args any) (json.RawMess
 	c.pending[id] = ch
 	c.mu.Unlock()
 	defer func() { c.mu.Lock(); delete(c.pending, id); c.mu.Unlock() }()
-	if err = c.send(ctx, live, model.Envelope{Type: "rpc", RequestID: id, Payload: model.JSON(model.RPC{Method: method, Args: encoded})}); err != nil {
+	if err = c.send(ctx, live, model.Envelope{Type: "rpc", RequestID: id, Payload: model.JSON(model.RPC{Method: request.Method(), Args: encoded})}); err != nil {
 		return nil, err
 	}
 	select {
@@ -513,7 +516,7 @@ func (c *Client) execute(root context.Context, dispatch model.Dispatch) {
 		return
 	}
 	authCtx, authCancel := context.WithTimeout(ctx, 15*time.Second)
-	response, err := c.RPC(authCtx, "command_authorize", model.CommandAuthorizeArgs{CommandID: id, AssignmentID: dispatch.Command.AssignmentID})
+	response, err := c.RPC(authCtx, model.CommandAuthorizeArgs{CommandID: id, AssignmentID: dispatch.Command.AssignmentID})
 	authCancel()
 	if err != nil {
 		notStarted("authorization_failed", "could not obtain current execution authorization: "+err.Error())
