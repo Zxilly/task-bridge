@@ -75,10 +75,10 @@ func NewAdminHandler(b *broker.Broker, token string) http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		if e != nil {
 			w.WriteHeader(400)
-			_ = json.NewEncoder(w).Encode(map[string]any{"error": model.AsError(e)})
+			_ = json.NewEncoder(w).Encode(model.ErrorResult{Error: model.AsError(e)})
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"result": out})
+		_ = json.NewEncoder(w).Encode(model.AdminResponse[any]{Result: out})
 	})
 	registry := prometheus.NewRegistry()
 	registry.MustRegister(prometheus.NewGoCollector(), prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))

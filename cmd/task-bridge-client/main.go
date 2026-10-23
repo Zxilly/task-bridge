@@ -27,6 +27,17 @@ func main() {
 		os.Exit(1)
 	}
 }
+
+type doctorStatus struct {
+	OK                bool     `json:"ok"`
+	ExecutorID        string   `json:"executor_id"`
+	Workspaces        []string `json:"workspaces"`
+	CredentialPresent bool     `json:"credential_present"`
+	ShellExecuted     bool     `json:"shell_executed"`
+	NetworkChecked    bool     `json:"network_checked"`
+	NetworkCheck      string   `json:"network_check,omitempty"`
+}
+
 func command() *cobra.Command {
 	root := &cobra.Command{Use: "task-bridge-client", Short: "Local MCP task client and Bash executor", Version: model.Version, SilenceUsage: true, SilenceErrors: true}
 	var configPath string
@@ -84,13 +95,13 @@ func command() *cobra.Command {
 			ids = append(ids, id)
 		}
 		sort.Strings(ids)
-		status := map[string]any{"ok": true, "executor_id": cfg.ExecutorID, "workspaces": ids, "credential_present": true, "shell_executed": false, "network_checked": false}
+		status := doctorStatus{OK: true, ExecutorID: cfg.ExecutorID, Workspaces: ids, CredentialPresent: true}
 		if connect {
 			if err = probe(cmd.Context(), cfg.ServerURL); err != nil {
 				return err
 			}
-			status["network_checked"] = true
-			status["network_check"] = "TCP/TLS only; does not register or replace an executor connection"
+			status.NetworkChecked = true
+			status.NetworkCheck = "TCP/TLS only; does not register or replace an executor connection"
 		}
 		return json.NewEncoder(os.Stdout).Encode(status)
 	}}

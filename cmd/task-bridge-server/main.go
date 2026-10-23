@@ -101,7 +101,7 @@ func command() *cobra.Command {
 	admin.AddCommand(executors)
 	var resetReason string
 	resetJournal := &cobra.Command{Use: "reset-journal ID", Short: "Reset a lost journal binding after verified stop; revoke old executor credentials", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		return call(cmd, "executors.reset_journal", map[string]any{"id": args[0], "reason": resetReason})
+		return call(cmd, "executors.reset_journal", model.AdminArgs{ID: args[0], Reason: resetReason})
 	}}
 	resetJournal.Flags().StringVar(&resetReason, "reason", "", "Evidence that all prior execution has stopped")
 	executors.AddCommand(resetJournal)
@@ -116,7 +116,7 @@ func command() *cobra.Command {
 	create.Flags().StringVar(&workspace, "workspace", "", "Bound workspace ID")
 	create.Flags().StringVar(&agent, "agent", "", "Stable Claude slot ID")
 	devices.AddCommand(create, &cobra.Command{Use: "list", RunE: func(cmd *cobra.Command, _ []string) error { return call(cmd, "devices.list", struct{}{}) }}, &cobra.Command{Use: "revoke ID", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		return call(cmd, "devices.revoke", map[string]any{"id": args[0]})
+		return call(cmd, "devices.revoke", model.AdminArgs{ID: args[0]})
 	}})
 	workspaces := &cobra.Command{Use: "workspaces"}
 	admin.AddCommand(workspaces)
@@ -130,24 +130,24 @@ func command() *cobra.Command {
 	workspaces.AddCommand(wsCreate)
 	var releaseReason string
 	release := &cobra.Command{Use: "release ID", Short: "Release quarantine after verified process reconciliation", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		return call(cmd, "workspaces.release", map[string]any{"id": args[0], "reason": releaseReason})
+		return call(cmd, "workspaces.release", model.AdminArgs{ID: args[0], Reason: releaseReason})
 	}}
 	release.Flags().StringVar(&releaseReason, "reason", "", "Evidence that execution has stopped")
 	workspaces.AddCommand(release)
 	tasks := &cobra.Command{Use: "tasks"}
 	admin.AddCommand(tasks, &cobra.Command{Use: "commands"})
 	tasks.AddCommand(&cobra.Command{Use: "inspect ID", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		return call(cmd, "tasks.inspect", map[string]any{"id": args[0]})
+		return call(cmd, "tasks.inspect", model.AdminArgs{ID: args[0]})
 	}})
 	var abandonReason string
 	abandon := &cobra.Command{Use: "abandon ID", Short: "Audit an unresolved task and quarantine its workspace", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		return call(cmd, "tasks.abandon", map[string]any{"id": args[0], "reason": abandonReason})
+		return call(cmd, "tasks.abandon", model.AdminArgs{ID: args[0], Reason: abandonReason})
 	}}
 	abandon.Flags().StringVar(&abandonReason, "reason", "", "Audit reason")
 	tasks.AddCommand(abandon)
 	var outcome, resolveReason string
 	resolve := &cobra.Command{Use: "resolve ID", Short: "Resolve an unknown command using verified evidence", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		return call(cmd, "commands.resolve", map[string]any{"id": args[0], "outcome": outcome, "reason": resolveReason})
+		return call(cmd, "commands.resolve", model.AdminArgs{ID: args[0], Outcome: outcome, Reason: resolveReason})
 	}}
 	resolve.Flags().StringVar(&outcome, "outcome", "", "not_started or stopped")
 	resolve.Flags().StringVar(&resolveReason, "reason", "", "Verification evidence")
@@ -161,7 +161,7 @@ func command() *cobra.Command {
 		if output == "" {
 			return errors.New("--output is required")
 		}
-		return call(cmd, "backup", map[string]any{"output": output})
+		return call(cmd, "backup", model.AdminArgs{Output: output})
 	}}
 	backup.Flags().StringVar(&output, "output", "", "New snapshot path on the broker")
 	admin.AddCommand(backup)
@@ -186,12 +186,15 @@ func adminCall(ctx context.Context, cfg server.Config, token, method string, arg
 	if e != nil {
 		return e
 	}
-	var v map[string]json.RawMessage
+	var v struct {
+		model.AdminResponse[json.RawMessage]
+		Error json.RawMessage `json:"error"`
+	}
 	if e = json.Unmarshal(data, &v); e != nil {
 		return e
 	}
 	if resp.StatusCode != 200 {
-		if raw := v["error"]; len(raw) > 0 {
+		if raw := v.Error; len(raw) > 0 {
 			var remote model.Error
 			if json.Unmarshal(raw, &remote) == nil {
 				return &remote
@@ -200,7 +203,7 @@ func adminCall(ctx context.Context, cfg server.Config, token, method string, arg
 		return fmt.Errorf("administrative HTTP %d", resp.StatusCode)
 	}
 	var pretty bytes.Buffer
-	if e = json.Indent(&pretty, v["result"], "", "  "); e != nil {
+	if e = json.Indent(&pretty, v.Result, "", "  "); e != nil {
 		return e
 	}
 	_, e = fmt.Fprintln(out, pretty.String())
