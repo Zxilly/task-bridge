@@ -107,7 +107,14 @@ func (s *Store) Close() error {
 	return unlock
 }
 func (s *Store) Update(ctx context.Context, fn func(*Tx) error) error {
-	t, e := s.DB.BeginTx(ctx, nil)
+	conn, e := s.DB.Conn(ctx)
+	if e != nil {
+		return e
+	}
+	// A canceled transaction can roll back in database/sql's goroutine.
+	// Close waits for that rollback to release the connection before returning.
+	defer conn.Close()
+	t, e := conn.BeginTx(ctx, nil)
 	if e != nil {
 		return e
 	}

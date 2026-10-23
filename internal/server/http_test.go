@@ -146,8 +146,8 @@ func TestServeListenerFailureClosesOtherListenerAndReleasesStore(t *testing.T) {
 			if err = Serve(ctx, cfg, slog.New(slog.NewTextHandler(io.Discard, nil))); err == nil {
 				t.Fatal("Serve succeeded with occupied listener")
 			}
-			// ListenAndServe may be scheduled after its sibling has failed;
-			// http.Server.Close must also prevent this late listener from starting.
+			// ListenAndServe may bind after its sibling has failed; Serve must
+			// finish both serving loops before another owner reuses the address.
 			listener, err := net.Listen("tcp", other)
 			if err != nil {
 				t.Fatalf("sibling listener survived failed Serve: %v", err)

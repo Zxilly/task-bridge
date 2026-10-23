@@ -355,13 +355,19 @@ func Serve(ctx context.Context, cfg Config, log *slog.Logger) error {
 	defer func() { cancel(); <-runDone }()
 	pub := &http.Server{Addr: cfg.Listen, Handler: NewHandler(b), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 32 << 10}
 	admin := &http.Server{Addr: cfg.AdminListen, Handler: NewAdminHandler(b, token), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
-	// Close both listeners on every exit, including a failure to bind only
-	// one address. Graceful Shutdown below remains the normal exit path.
-	defer pub.Close()
-	defer admin.Close()
+	// Close and join both serving loops on every exit. ListenAndServe can be
+	// between its shutdown check and net.Listen when its sibling fails; Close
+	// alone does not wait for that late bind to be closed by Serve.
+	var serveWG sync.WaitGroup
+	serveWG.Add(2)
+	defer func() {
+		_ = pub.Close()
+		_ = admin.Close()
+		serveWG.Wait()
+	}()
 	errs := make(chan error, 2)
-	go func() { errs <- pub.ListenAndServe() }()
-	go func() { errs <- admin.ListenAndServe() }()
+	go func() { defer serveWG.Done(); errs <- pub.ListenAndServe() }()
+	go func() { defer serveWG.Done(); errs <- admin.ListenAndServe() }()
 	log.Info("bridge listening", "listen", cfg.Listen, "admin_listen", cfg.AdminListen, "version", model.Version)
 	select {
 	case <-ctx.Done():
