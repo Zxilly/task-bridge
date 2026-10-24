@@ -1,6 +1,6 @@
 # Task Bridge
 
-用 Go 实现的自托管任务桥。A 端控制器连接远程 WebSocket MCP，为每个任务启动一个独立 Claude Code 会话；B 以 stdio MCP 客户端接入其他宿主，并在本机指定工作区执行 Claude 发出的 Bash 命令。服务端保存任务、命令、输出及恢复信息。
+用 Go 实现的自托管任务桥。A 端控制器连接远程 WebSocket MCP，为每个新任务启动一个独立 Claude Code 会话，并支持显式恢复同一任务的原会话；B 以 stdio MCP 客户端接入其他宿主，并在本机指定工作区执行 Claude 发出的 Bash 命令。服务端保存任务、命令、输出及恢复信息。
 
 源码仓库：[Zxilly/task-bridge](https://github.com/Zxilly/task-bridge)。
 
@@ -100,7 +100,15 @@ bin/task-bridge-agent doctor --config agent.json
 bin/task-bridge-agent run --config agent.json
 ```
 
-`doctor` 只检查本地配置、Claude 路径和设备凭据是否存在，不启动 Claude、不验证账号登录，也不连接 broker。`run` 保持在线，由控制器接收 channel 通知。每个任务使用新 UUID、独立临时工作目录及本机 HTTP MCP 转发，启动一次 `claude --print`，不恢复旧会话、不保存 transcript。子进程复用用户的 Claude 登录；不要求用户另建 API key。
+`doctor` 只检查本地配置、Claude 路径和设备凭据是否存在，不启动 Claude、不验证账号登录，也不连接 broker。`run` 保持在线，由控制器接收 channel 通知。新任务使用新 UUID、独立工作目录及本机 HTTP MCP 转发，启动 `claude --print`；Claude transcript 保存在用户的正常 Claude 配置目录中。子进程复用用户的 Claude 登录；不要求用户另建 API key。
+
+未完成的任务保留 `state_dir` 中的会话映射和工作目录。先停止同一 A 身份的 `run`，核对任务、命令和 B journal，再显式恢复一个任务：
+
+```sh
+bin/task-bridge-agent resume --task-id <task_id> --config agent.json
+```
+
+该命令使用原 Claude session UUID 和工作目录，重新获得 broker assignment，并创建新的 relay 配置和凭据；只处理指定任务，结束后退出。它不绕过 unknown 命令、reconcile 或工作区隔离检查。会话映射或 Claude transcript 缺失时失败，不退回新会话。终态清理本地映射和任务目录，不删除 Claude 用户配置中的 transcript；完整步骤见 [运维文档](docs/operations.md#恢复一个已保存的任务)。
 
 自动记忆和普通 hooks 在子会话中关闭。用户及管理层的 Claude 规则仍可能适用；这些规则与前一个任务的聊天历史不同。该行为隔离任务上下文，不提供操作系统沙箱。参数、权限和恢复边界见 [运维步骤](docs/operations.md)。
 
@@ -108,10 +116,12 @@ bin/task-bridge-agent run --config agent.json
 
 B 工具包括 `tasks_submit`、`tasks_run`、`tasks_get`、`tasks_wait`、`tasks_cancel`、`tasks_list` 和 `tasks_events`。控制器接收分派并启动 Claude；子进程通过 relay 调用 `task_accept`，使用 `bash` 工具，再调用 `task_complete` 保存结果。Claude 的终端回复和进程退出码不代替服务端最终结果。完整工具字段及恢复语义见 [协议文档](docs/protocol.md)。
 
+新提交的 `prompt` 必须使用英文：1–8192 字节，仅允许可打印 ASCII 与 TAB/LF/CR，并且至少包含一个 `A–Z` 或 `a–z`。这项规则同时适用于 `tasks_submit` 和 `tasks_run`。已有任务的相同 key、相同内容重试仍读取原记录；恢复旧任务不会重新校验或改写其原始 prompt。
+
 ## 行为边界
 
 - 一台服务端进程配合本地 SQLite；一个 A 身份固定工作区，工作区串行处理任务，默认每个任务使用不同 Claude 会话。
-- A 子进程未提交最终结果便退出时，控制器报错并断开；不自动重试任务或恢复 interrupted 分派。先核对服务端状态、B journal 与已执行命令。
+- A 子进程未提交最终结果便退出时，控制器报错并断开，保留原会话映射和工作目录；不自动重试。核对后使用显式 `resume` 继续同一任务。
 - 等待请求结束或断线不等于任务结束。使用返回的 `task_id`、`command_id` 查询已保存的状态。
 - 相同逻辑命令重试复用 `operation_key`。结果不明时先查询；更换 key 无法避免重复副作用。
 - 无法确认是否启动或是否完成的命令进入 `unknown`，需要核对。任意 Bash 副作用不具备 exactly-once 保证。

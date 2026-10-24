@@ -46,6 +46,8 @@ bin/task-bridge-client mcp --config client.json
 
 Windows 的 `root` 使用 Windows 路径，`bash_path` 通常为 `C:\Program Files\Git\bin\bash.exe`。Go 配置中的路径按 Windows 规则解析；Bash 命令内部的路径由 Git Bash 解释。cwd 可使用 workspace 内相对目录。不要把 `/c/...` shell 路径直接当成 Go 的 Windows cwd 字段。
 
+`tasks_submit` 和 `tasks_run` 的新任务 `prompt` 要求英文，长度为 1–8192 字节，只接受可打印 ASCII（0x20–0x7E）及 TAB、LF、CR，并至少包含一个英文字母。非法 prompt 返回 `invalid_arguments`，不会创建或分派任务。提交结果不明时仍使用原 key 和原内容重试；已有非英文任务的原样幂等重试不受新规则影响，不要为了重试翻译或改写原内容。
+
 ## A 控制器与 Claude 登录
 
 默认 A 使用 `task-bridge-agent run`。控制器接收 broker 的 channel 通知，并为每个任务启动一个新的 `claude --print` 子进程。Claude 通过当前任务的本机 HTTP MCP relay 调用远程工具，不直接在 headless 模式加载 development channel。
@@ -59,7 +61,7 @@ Windows 的 `root` 使用 Windows 路径，`bash_path` 通常为 `C:\Program Fil
 | `server_url` | broker 的 `/mcp/agent` WS/WSS 地址；公网必须使用 WSS |
 | `token_env` 或 `token_file` | `claude` 角色设备 token，二选一；与 Claude 账号登录分开 |
 | `claude_path` | Claude CLI 名称或可执行文件路径，默认 `claude` |
-| `state_dir` | 私有状态目录，默认配置目录下的 `agent-state`；持有排他锁并容纳任务临时目录 |
+| `state_dir` | 私有状态目录，默认配置目录下的 `agent-state`；持有排他锁，保存未完成任务的会话映射与工作目录 |
 | `model` | 可选；未填写时使用 Claude 的正常模型选择 |
 | `allow_insecure_ws` | 仅为受控开发网络显式允许非 loopback 的明文 WS，默认关闭 |
 
@@ -74,11 +76,23 @@ bin/task-bridge-agent run --config agent.json
 
 省略 `run` 子命令也会启动控制器。`doctor` 不运行 Claude、不调用模型、不联网，只验证配置、可执行文件路径和设备凭据是否存在；不能用它证明 Claude 登录或设备鉴权已通过。控制器日志写入 stderr。每个 A 身份只运行一个控制器，同一 `state_dir` 由文件锁排他使用；停止实例前先检查任务状态。
 
-每个任务使用不同的 session UUID、临时 cwd 与本机 relay 凭据，启动参数不带 continue/resume，并关闭 transcript 持久化。子会话禁用本地执行和文件工具，只加载本次 relay 的 MCP 配置。`task_progress` 与 `task_complete` 仍是回传进度和结果的接口，Claude 的 stdout 或退出码不替代 broker 里的最终结果。
+每个新任务使用不同的 session UUID 和工作目录，首次以 `--session-id` 启动 Claude。显式恢复同一任务时，使用保存的 UUID、原工作目录与 `--resume`；每次启动都生成新的本机 relay 凭据和配置，不使用 `--continue` 或 `--fork-session`。子会话禁用本地执行和文件工具，只加载本次 relay 的 MCP 配置。`task_progress` 与 `task_complete` 仍是回传进度和结果的接口，Claude 的 stdout 或退出码不替代 broker 里的最终结果。
 
-子进程设置 `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`，并通过会话设置关闭 auto memory 和普通 hooks，避免跨任务自动记忆。managed hooks 只能由 managed 设置关闭；用户或 managed CLAUDE 规则仍可能进入上下文。保留用户登录和全局规则不等于复用旧任务的聊天历史，临时目录也不构成操作系统沙箱。官方参数和设置说明见 [CLI reference](https://code.claude.com/docs/en/cli-reference#cli-flags)、[autoMemoryEnabled](https://code.claude.com/docs/en/settings-reference#automemoryenabled) 与 [disableAllHooks](https://code.claude.com/docs/en/settings-reference#disableallhooks)。
+子进程设置 `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`，并通过会话设置关闭 auto memory 和普通 hooks，避免跨任务自动记忆。managed hooks 只能由 managed 设置关闭；用户或 managed CLAUDE 规则仍可能进入上下文。auto memory 与会话 transcript 分开：transcript 保持启用，以便恢复同一任务。启动器清除继承的 transcript 禁写变量，并关闭 `CLAUDE_CODE_RESUME_INTERRUPTED_TURN`，让恢复使用本次明确的提示。工作目录约束不构成操作系统沙箱。官方说明见 [会话恢复](https://code.claude.com/docs/en/sessions#what-a-resumed-session-restores)、[autoMemoryEnabled](https://code.claude.com/docs/en/settings-reference#automemoryenabled) 与 [disableAllHooks](https://code.claude.com/docs/en/settings-reference#disableallhooks)。
 
-控制器在会话结束后清理其临时 cwd 与 MCP 配置。子进程未调用 `task_complete` 就退出，或 broker 报告 interrupted 分派时，控制器报错并断开，不自动重试。先检查原 task/command、B journal 及进程证据；必要时停止控制器，用 [手工交互模式](compatibility.md#可选手工交互-channel-smoke) 检查任务，再明确调用 `task_resume`。未知执行结果仍须由管理员核实处理，不能靠启动新 Claude 会话绕过。
+`state_dir/sessions/` 保存任务与 Claude UUID 的映射和工作目录，不保存 Claude 登录凭据；MCP 配置每次启动时重建，进程结束后移除。未完成任务在进程退出后保留映射和工作目录；broker 确认终态后，控制器仅清理自己持有的任务目录。Claude 的 transcript 仍由 Claude 管理，默认位于 `~/.claude/projects/`，Windows 为 `%USERPROFILE%\.claude\projects\`，设置 `CLAUDE_CONFIG_DIR` 时使用对应位置。恢复时保留原系统账号与 Claude 配置目录。transcript 包含对话和工具结果，默认受 Claude 的 30 天保留期影响；本程序不会删除或复制用户 profile 中的 transcript。[Claude 会话存储说明](https://code.claude.com/docs/en/sessions#where-transcripts-are-stored)
+
+### 恢复一个已保存的任务
+
+子进程未完成任务便退出、处理任务时连接中断，或普通 `run` 遇到已保存的会话或 interrupted 分派时，控制器报错，不自动重试。先检查原 task/command、B journal 与进程证据，停止同一 A 身份的其他控制器，保留原 `agent.json`、`state_dir` 和 Claude profile，再运行：
+
+```sh
+bin/task-bridge-agent resume --task-id <task_id> --config agent.json
+```
+
+命令只处理指定任务，成功或失败后退出，不继续领取其他任务。对 interrupted 任务，控制器先调用 broker 的 `task_resume` 获取新 assignment，再以原 Claude UUID 和 cwd 启动会话；仍有未知命令、尚未完成的 reconcile 或工作区隔离时，broker 会拒绝恢复。若上次退出发生在 `task_accept` 之前，任务已经重新排队，则等待该任务的新 offer，由控制器先调用 `task_accept` 确认分派归属，再打开原 Claude 会话。已处于终态的任务只清理本地映射和目录，不启动 Claude。
+
+缺失、损坏或身份不匹配的本地会话映射会使恢复失败；Claude 找不到原 transcript 时也直接失败，不使用新 UUID 兜底。旧版未保存 transcript 的任务不能凭 task ID 重建原上下文。不要删除状态文件、更换命令 key 或重新提交任务来绕过未知结果。已存任务的原始 prompt 不因新英文提交规则被改写或拒绝；其他恢复校验保持不变。
 
 ## Compose 与 Caddy
 

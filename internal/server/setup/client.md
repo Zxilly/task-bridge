@@ -134,6 +134,8 @@ Call `tasks_list` with the configured `workspace_id` and a small `limit`, such a
 
 Keep the host-owned B subprocess running and arrange for the matching `task-bridge-agent` controller to be online. It receives the offer and starts a fresh Claude Code process for the task; B does not start that process. Call `tasks_submit` once with real values:
 
+Write every new task prompt in English. Both `tasks_submit` and `tasks_run` require 1–8192 bytes, printable ASCII plus TAB/LF/CR, and at least one `A–Z` or `a–z` letter. Use an ASCII nonce below. Invalid prompts return `invalid_arguments` without creating or dispatching a task. Exact retries of existing tasks retain the original content, including legacy non-English prompts; do not translate a prompt whose submission outcome is uncertain.
+
 ```json
 {
   "workspace_id": "<WORKSPACE_ID>",
@@ -147,7 +149,9 @@ Save the returned `task_id`. If submission times out or disconnects before its r
 
 Call `tasks_wait` with that `task_id` and `wait_ms: 10000`; if it remains pending, use the same ID with `tasks_get` or another bounded wait. A successful smoke test has a durable `succeeded` task, a known successful command result, and output identifying this B machine, the configured workspace, and the chosen nonce. Confirm with A's operator that its controller launched the task's Claude process. A wait timeout, queued task, Claude terminal reply, or process exit alone is not success.
 
-For session-isolation acceptance, submit a second task with a different key and nonce. Have A's operator verify a different Claude session ID and temporary working directory, and confirm the second durable result from B. If A intentionally uses the optional manual interactive-channel mode, verify its unsolicited channel delivery separately; that mode keeps one conversation across tasks.
+For session-isolation acceptance, submit a second task with a different key and nonce. Have A's operator verify a different Claude session ID and working directory, and confirm the second durable result from B. If A intentionally uses the optional manual interactive-channel mode, verify its unsolicited channel delivery separately; that mode keeps one conversation across tasks.
+
+To recover an unfinished controller-managed task, retain its existing `task_id` and have A's operator follow the saved-session procedure in [the A guide](claude.md#resume-one-saved-task). A runs `task-bridge-agent resume --task-id <TASK_ID> --config agent.json` using the original state directory and Claude profile. It resumes that task's original context and then exits; B continues querying the same task ID. Unknown command or reconciliation checks still apply, and missing A state is not repaired by submitting a replacement task.
 
 If A is unavailable, stop at “B authenticated; end-to-end test pending” and retain the task ID if one was already submitted. Do not configure or acquire A's token as part of B setup unless the user also requested that separate work.
 

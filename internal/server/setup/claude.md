@@ -34,7 +34,7 @@ claude auth login
 
 Do not replace an existing subscription login with API credentials, copy authentication files, or run a paid prompt merely to check the installation. The worker does not use `--bare`: that mode changes credential handling and does not use the normal subscription login. See [Claude's headless documentation](https://code.claude.com/docs/en/headless#start-faster-with-bare-mode).
 
-The installed CLI must support `--print`, `--session-id`, `--no-session-persistence`, `--tools`, `--allowedTools`, `--strict-mcp-config`, `--mcp-config`, and `--permission-prompts`. Check the actual `--help`; do not claim that a version number alone proves a live run works.
+The installed CLI must support `--print`, `--session-id`, `--resume`, `--tools`, `--allowedTools`, `--strict-mcp-config`, `--mcp-config`, and `--permission-prompts`. Check the actual `--help`; do not claim that a version number alone proves a live run works.
 
 Prefer an existing agent binary from a trusted installation or platform package. If a source build is needed, use a verified checkout of [Zxilly/task-bridge](https://github.com/Zxilly/task-bridge), preserve existing files, and record its revision. From its root:
 
@@ -62,7 +62,7 @@ Create or update `agent.json` with this shape, replacing all angle-bracket place
 }
 ```
 
-Use a JSON serializer so Windows paths are escaped correctly. `claude_path` may be `claude` if it resolves reliably in the controller's PATH. `state_dir` holds the controller's exclusive lock and per-task temporary directories. Use a private location that is not the B project directory or a shared scratch folder. The controller cleans up a task's temporary working directory and MCP configuration when that session ends.
+Use a JSON serializer so Windows paths are escaped correctly. `claude_path` may be `claude` if it resolves reliably in the controller's PATH. `state_dir` holds the controller's exclusive lock, saved task-to-session mappings, and working directories. Each invocation creates an MCP configuration there and removes it when the process ends. Use a private location outside the B project and shared scratch folders. Unfinished tasks retain their mappings and directories for explicit recovery. The controller removes its task directory only after confirming a terminal broker result; it does not delete transcripts from the user's Claude profile.
 
 If the launching process already inherits the private `BRIDGE_AGENT_TOKEN` variable, replace `token_file` with `"token_env": "BRIDGE_AGENT_TOKEN"`. Configure exactly one token source. The JSON does not expand `${VARIABLE}` expressions. Relative token-file and state-directory paths resolve against the directory containing `agent.json`; a relative executable path containing a path separator resolves there too. An optional `model` field overrides Claude's normal model selection for these tasks; omit it unless requested.
 
@@ -88,7 +88,9 @@ Keep `run` alive in the user's intended terminal or service manager. It receives
 
 ## Understand each task's session
 
-For each assigned task, the controller creates a fresh session UUID, a separate temporary working directory, and a local HTTP MCP relay restricted to that task. It launches `claude --print` with the task prompt, without `--resume` or `--continue`, and disables transcript persistence. The relay forwards permitted tool calls over the controller's broker connection. Work on the project still runs on B.
+Each new task gets a fresh session UUID and a separate working directory. The first invocation uses `claude --print --session-id <UUID>`; explicit recovery of that task uses `--resume <the-same-UUID>` and the original directory. Every invocation receives a new local HTTP MCP relay configuration and credential restricted to the current task and assignment. The launcher does not use `--continue`, `--fork-session`, or `--no-session-persistence`. Work on the project still runs on B.
+
+Claude saves transcripts in its normal profile, by default under `~/.claude/projects/` or `%USERPROFILE%\.claude\projects\` on Windows; an existing `CLAUDE_CONFIG_DIR` changes that location. Keep the same OS account and Claude profile for recovery. Transcripts contain conversation and tool data and are subject to Claude's retention settings, normally 30 days. Auto memory can remain disabled while these transcripts persist. See [transcript storage](https://code.claude.com/docs/en/sessions#where-transcripts-are-stored).
 
 The child uses only the specified MCP configuration and has local execution and file tools disabled. Automatic memory is disabled for the child, and its settings disable ordinary hooks. Managed policy can still require managed hooks. Existing user or managed Claude instructions and the user's login may still apply; those shared rules are distinct from a previous task's conversation. This isolates task conversations, not the operating system or all account-level configuration. See [session behavior](https://code.claude.com/docs/en/agent-sdk/sessions), [auto memory](https://code.claude.com/docs/en/settings-reference#automemoryenabled), and [hook settings](https://code.claude.com/docs/en/settings-reference#disableallhooks).
 
@@ -97,6 +99,8 @@ Claude first calls `task_accept` through the relay, then uses bridge tools to ex
 ## Verify two independent tasks
 
 Keep B's host-owned client running. Through B, call `tasks_submit` with real values and a new key:
+
+Write every new task prompt in English. Both `tasks_submit` and `tasks_run` require 1–8192 bytes, printable ASCII plus TAB/LF/CR, and at least one `A–Z` or `a–z` letter. Use ASCII nonces in the example below. An exact retry of an existing task keeps its original prompt, including a legacy non-English prompt; do not translate it during recovery.
 
 ```json
 {
@@ -109,11 +113,29 @@ Keep B's host-owned client running. Through B, call `tasks_submit` with real val
 
 Save the returned `task_id`. If a response is lost, retry the identical request with the same idempotency key. Use `tasks_wait` or `tasks_get` to confirm the durable final state and the expected B marker, hostname, and directory. A queued task, wait timeout, local process exit, or tool list alone does not prove success.
 
-Submit a second task with a different key and nonce. Verify that the controller starts another Claude process with a different session ID and temporary directory, then returns that second task's durable result. Do not rely on asking the model whether it remembers the previous task as the sole isolation check. If B is unavailable, report that end-to-end verification is pending rather than acquiring B's token.
+Submit a second task with a different key and nonce. Verify that the controller starts another Claude process with a different session ID and working directory, then returns that second task's durable result. Do not rely on asking the model whether it remembers the previous task as the sole isolation check. If B is unavailable, report that end-to-end verification is pending rather than acquiring B's token.
+
+## Resume one saved task
+
+After checking the broker's task and command records and B's journal, stop other controllers using this A identity. Keep the original `agent.json`, `state_dir`, and Claude profile. Recover the original task with:
+
+```sh
+"/absolute/path/task-bridge-agent" resume --task-id "<TASK_ID>" --config "/absolute/path/agent.json"
+```
+
+```powershell
+& 'C:\Private\TaskBridge\task-bridge-agent.exe' resume --task-id '<TASK_ID>' --config 'C:\Private\TaskBridge\agent.json'
+```
+
+This command handles only the named task and then exits. For an interrupted assignment, the controller first calls the broker's `task_resume` to obtain a new assignment, then starts Claude with the saved session UUID and working directory. If the earlier process exited before accepting and the task was requeued, it waits for that task's new offer and calls `task_accept` to confirm ownership before opening the original Claude session. Unknown commands, incomplete reconciliation, and workspace quarantine still block recovery. If the task is already terminal, the command only cleans up its saved mapping and directory without starting Claude.
+
+A missing, damaged, or mismatched local session mapping fails recovery. If Claude cannot find the saved transcript, the command also fails; it never substitutes a fresh session. Tasks created by an older version that disabled transcript persistence cannot recover that missing context. Do not delete state, invent a new command key, or resubmit under a new task ID to bypass an uncertain execution result. Existing task prompts are not revalidated against the new English-only submission rule.
+
+For a recovery acceptance test, use a controlled unfinished task with no unknown command, confirm the original session UUID and directory are reused with a new assignment and relay credential, and read the durable final result from B. Static CLI checks and helper-process tests do not prove real Claude transcript recovery.
 
 ## Optional: manually operated interactive channel
 
-The previous manual workflow remains available for an interactive Claude session. It keeps one conversation across tasks and does not provide the default worker's per-task session isolation. Stop the controller for that agent identity before using it. An operator can also use this mode to inspect interrupted state and explicitly call `task_resume` after reviewing execution evidence.
+The previous manual workflow remains available for an interactive Claude session. It keeps one conversation across tasks and does not provide the default worker's per-task session isolation. Stop the controller for that agent identity before using it. Use the controller's `resume` command above to recover a controller-managed task with its original Claude context; a new manual conversation does not recover that context merely by calling the broker's `task_resume` tool.
 
 Configure the remote WebSocket endpoint in a dedicated MCP file:
 

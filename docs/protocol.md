@@ -51,6 +51,8 @@ channel 示例：
 
 A 的执行、进度与完成请求都要求当前连接和有效 assignment。历史查询不延续旧执行授权。不能仅凭“当前任务”推断请求属于哪个任务。
 
+控制器的 `task-bridge-agent resume --task-id <task_id>` 与协议工具 `task_resume` 分工不同：前者读取本地保存的 Claude session 映射，后者由 broker 核对 interrupted 状态并签发新 assignment。控制器先完成该授权，再使用原 Claude UUID、原 cwd 和本次新的 relay 配置恢复对话。unknown 命令、未完成的 reconcile 或工作区隔离仍会阻止恢复。退出发生在领取前、已经重新排队的任务等待自己的新 offer；控制器先调用 `task_accept` 确认分派归属，再打开原会话。命令只处理指定任务后退出；缺失映射或 transcript 时不创建新会话兜底。
+
 `bash` 默认执行超时 120 秒，上限 15 分钟，且受任务剩余期限限制。默认等待 30 秒；`wait_ms` 上限 120 秒。等待结束后 `pending` 表示命令是否尚未结束，后续通过 command ID 查询。取消 MCP 请求只结束该次等待；业务停止使用 cancel 工具。
 
 命令结果包含 `command` 对象以及 `command_id`、`stdout`、`stderr`、`chunks`、`text_omitted`、`cursor`、`has_more`、`truncated`、`dropped_bytes`、`pending`。`command` 中有 state、exit_code、signal、duration_ms 和实际 cwd。执行无法启动或结果不明时，`command.error` 保存结构化诊断，`code` 最多 64 字节、`message` 最多 2048 字节；诊断随 command.finished 持久化，并在 reconcile 中保留和回传。正常启动后以非零退出码结束的命令仍为 `exited`，保留退出码与输出，不能当作网络错误。
@@ -86,6 +88,10 @@ B 的 stdio 工具由官方 MCP Go SDK 托管。B 到 broker 的控制连接独�
 | `tasks_events` | `task_id` | `after_seq, limit`；读取进度事件 |
 
 任务 deadline 默认为 30 分钟，可设 1 秒至 24 小时。B 等待默认 25 秒，上限 60 秒。等待响应包含 `pending`、`task_id` 和 `snapshot`。网络断开时提交结果可能不明，使用相同 idempotency key重新提交找回原任务。
+
+新任务 `prompt` 必须使用英文。`tasks_submit` 和 `tasks_run` 共用以下校验：1–8192 字节，仅允许 0x20–0x7E 的可打印 ASCII 以及 TAB（0x09）、LF（0x0A）、CR（0x0D），并至少包含一个 `A–Z` 或 `a–z`。非 ASCII 字符、其他控制字节或不含英文字母的内容返回 `invalid_arguments`，不创建任务、事件、命令或分派。这是确定性的字符约束，不执行自然语言识别。
+
+幂等重试先核对已存记录：相同 key、相同请求仍返回原任务，即使旧 prompt 不符合新的英文规则；相同 key、不同请求返回 `idempotency_conflict`。已存任务的查询和恢复不重验或改写原 prompt。该输入规则只约束新提交的任务描述，不改变命令输出或已有任务结果的编码。
 
 列表默认每页 20 条，最多 50 条。cursor 是本实现的数字分页位置，列表变化时不提供固定快照分页保证。事件 `seq` 与列表 cursor 不可互换。
 
