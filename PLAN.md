@@ -187,7 +187,8 @@ B 的配置将 `workspace_id` 映射到真实目录、Shell profile、超时上�
 | --- | --- | --- |
 | `task_accept` | `task_id, assignment_id` | 显式接受分派；相同分派重复调用幂等 |
 | `task_get` | `task_id` | 返回授权范围内的任务和命令快照 |
-| `task_resume` | `task_id, previous_assignment_id` | 请求恢复；先核对 B 状态，不能仅凭重连自动续跑 |
+| `task_resume` | `task_id, resume_request_id?, previous_assignment_id?` | 默认控制器领取 B 的持久恢复请求；手工 MCP 兼容 previous_assignment_id，有 pending 请求时禁止绕过；两种恢复 ID 必须严格二选一 |
+| `task_resume_failed` | `task_id, resume_request_id, error_code, message` | controller-only，记录恢复请求失败；code 最多 64 字节、message 最多 1024 UTF-8 字节，不进入子会话 relay |
 | `bash` | `task_id, assignment_id, operation_key, command, cwd?, timeout_ms?, wait_ms?` | 建立命令记录、路由到 B；快速命令直接返回结果，长命令返回 ticket |
 | `command_get` | `task_id, command_id` | 查询状态、退出码、截断信息 |
 | `command_wait` | `task_id, command_id, wait_ms?` | 有界等待，不改变命令执行期限 |
@@ -232,6 +233,7 @@ B 的配置将 `workspace_id` 映射到真实目录、Shell profile、超时上�
 | `tasks_run` | 同上，加 `wait_ms?` | 便利接口：先提交，再等待 |
 | `tasks_get` | `task_id` | 查询当前状态和最终结果 |
 | `tasks_wait` | `task_id, wait_ms?` | 有界等待，超时返回当前状态和 task_id |
+| `tasks_resume` | `task_id, idempotency_key` | 显式请求恢复原 task，返回持久 resume_request；原 A 常驻领取，同 key 读原 receipt，新 key 才新尝试 |
 | `tasks_cancel` | `task_id, reason?` | 请求取消；区分取消申请和停止确认 |
 | `tasks_list` | `workspace_id?, cursor?, limit?` | 查询授权范围内任务 |
 | `tasks_events` | `task_id, after_seq?, limit?` | 分页取得任务进度事件 |

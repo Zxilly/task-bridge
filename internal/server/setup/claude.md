@@ -94,7 +94,7 @@ Claude saves transcripts in its normal profile, by default under `~/.claude/proj
 
 The child uses only the specified MCP configuration and has local execution and file tools disabled. Automatic memory is disabled for the child, and its settings disable ordinary hooks. Managed policy can still require managed hooks. Existing user or managed Claude instructions and the user's login may still apply; those shared rules are distinct from a previous task's conversation. This isolates task conversations, not the operating system or all account-level configuration. See [session behavior](https://code.claude.com/docs/en/agent-sdk/sessions), [auto memory](https://code.claude.com/docs/en/settings-reference#automemoryenabled), and [hook settings](https://code.claude.com/docs/en/settings-reference#disableallhooks).
 
-Claude first calls `task_accept` through the relay, then uses bridge tools to execute commands, report progress, and complete the task. Its terminal text and a successful process exit do not substitute for the broker's durable final result. If the child exits without completing its task, the controller reports an error and disconnects. It does not automatically retry the task or resume an interrupted assignment. Preserve the task ID, inspect broker and B journal evidence, and use the operator's explicit recovery procedure. Do not create a new command key to escape an unknown outcome.
+The controller accepts a fresh assignment before saving its session mapping and starting Claude. Claude first reads `task_get`, then uses bridge tools to execute commands, report progress, and complete the task. Its terminal text and a successful process exit do not substitute for the broker's durable final result. If the child exits without completing its task, the controller closes the old connection, then reconnects and stays online. It waits for B to request recovery through `tasks_resume`; reconnecting or receiving an old interrupted notification does not restart the task. Preserve the task ID and inspect broker and B journal evidence. Do not create a new command key to escape an unknown outcome.
 
 ## Verify two independent tasks
 
@@ -117,25 +117,19 @@ Submit a second task with a different key and nonce. Verify that the controller 
 
 ## Resume one saved task
 
-After checking the broker's task and command records and B's journal, stop other controllers using this A identity. Keep the original `agent.json`, `state_dir`, and Claude profile. Recover the original task with:
+Keep the original `agent.json`, `state_dir`, and Claude profile, and keep this A controller running normally. After reviewing the broker's task and command records and B's journal, the original submitting B calls its MCP tool `tasks_resume` with the existing `task_id` and an idempotency key. Follow [the B guide](client.md#resume-an-existing-task) for that request. A needs no separate resume CLI command and no copy of B's credential.
 
-```sh
-"/absolute/path/task-bridge-agent" resume --task-id "<TASK_ID>" --config "/absolute/path/agent.json"
-```
+The broker stores a recovery request and notifies the original A with its `resume_request_id`. The controller checks the saved session mapping, claims that request once using `task_resume`, and launches Claude with the original UUID and working directory, a new assignment, and a new relay credential. `pending` means the request is waiting for A; `accepted` means A has claimed it, not that Claude has started or completed the task. B keeps querying the same task ID. Unknown commands, incomplete reconciliation, workspace quarantine, and the original deadline still apply.
 
-```powershell
-& 'C:\Private\TaskBridge\task-bridge-agent.exe' resume --task-id '<TASK_ID>' --config 'C:\Private\TaskBridge\agent.json'
-```
+If a claimed attempt fails or loses its connection, it becomes `failed` and is not restarted by another reconnect. The controller stays online. B can retry a lost response with the same key to read the original receipt; after reviewing and resolving the failure, a new key explicitly requests another attempt. A duplicate notification never authorizes a second launch for the same request. A terminal task does not start another Claude process.
 
-This command handles only the named task and then exits. For an interrupted assignment, the controller first calls the broker's `task_resume` to obtain a new assignment, then starts Claude with the saved session UUID and working directory. If the earlier process exited before accepting and the task was requeued, it waits for that task's new offer and calls `task_accept` to confirm ownership before opening the original Claude session. Unknown commands, incomplete reconciliation, and workspace quarantine still block recovery. If the task is already terminal, the command only cleans up its saved mapping and directory without starting Claude.
+A missing, damaged, or mismatched local session mapping fails the recovery request. If Claude cannot find the saved transcript, the attempt also fails; it never substitutes a fresh session. Tasks created by an older version that disabled transcript persistence cannot recover that missing context. Do not delete state, invent a new command key, or resubmit under a new task ID to bypass an uncertain execution result. Existing task prompts are not revalidated against the new English-only submission rule.
 
-A missing, damaged, or mismatched local session mapping fails recovery. If Claude cannot find the saved transcript, the command also fails; it never substitutes a fresh session. Tasks created by an older version that disabled transcript persistence cannot recover that missing context. Do not delete state, invent a new command key, or resubmit under a new task ID to bypass an uncertain execution result. Existing task prompts are not revalidated against the new English-only submission rule.
-
-For a recovery acceptance test, use a controlled unfinished task with no unknown command, confirm the original session UUID and directory are reused with a new assignment and relay credential, and read the durable final result from B. Static CLI checks and helper-process tests do not prove real Claude transcript recovery.
+For a recovery acceptance test, use a controlled unfinished task with no unknown command. Confirm that A stays online without restarting the task, then have B call `tasks_resume`. Verify reuse of the original session UUID and directory with a new assignment and relay credential, and read the durable final result from B. Static CLI checks and helper-process tests do not prove real Claude transcript recovery.
 
 ## Optional: manually operated interactive channel
 
-The previous manual workflow remains available for an interactive Claude session. It keeps one conversation across tasks and does not provide the default worker's per-task session isolation. Stop the controller for that agent identity before using it. Use the controller's `resume` command above to recover a controller-managed task with its original Claude context; a new manual conversation does not recover that context merely by calling the broker's `task_resume` tool.
+The previous manual workflow remains available for an interactive Claude session. It keeps one conversation across tasks and does not provide the default worker's per-task session isolation. Stop the controller for that agent identity before using it. Use B's `tasks_resume` with the original controller online to recover a controller-managed task; a new manual conversation does not recover that task's Claude context merely by calling the broker's `task_resume` tool.
 
 Configure the remote WebSocket endpoint in a dedicated MCP file:
 

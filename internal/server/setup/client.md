@@ -126,7 +126,7 @@ For hosts that use an `mcpServers` object, merge this entry while preserving exi
 
 Let the host start and own the subprocess; do not start an extra `task-bridge-client mcp` as a background daemon. Stdout is reserved for MCP and diagnostics go to stderr. One executor/journal can be used by only one B process at a time. Reuse or cleanly stop an existing host-owned instance before replacing it; inspect active work before stopping it, because host shutdown also stops its local command execution.
 
-Reload or restart only the relevant host connection using the host's supported workflow. Confirm discovery of these seven tools: `tasks_submit`, `tasks_run`, `tasks_get`, `tasks_wait`, `tasks_cancel`, `tasks_list`, and `tasks_events`.
+Reload or restart only the relevant host connection using the host's supported workflow. Confirm discovery of these eight tools: `tasks_submit`, `tasks_run`, `tasks_get`, `tasks_wait`, `tasks_resume`, `tasks_cancel`, `tasks_list`, and `tasks_events`.
 
 Call `tasks_list` with the configured `workspace_id` and a small `limit`, such as `1`. A successful response, including an empty list, verifies a real authenticated broker RPC from this client. A local tool list alone does not prove the broker connection is usable. If using an external tool timeout, allow the bounded waits to finish; `tasks_wait` can wait up to 60 seconds and `tasks_run` also performs submission.
 
@@ -151,9 +151,33 @@ Call `tasks_wait` with that `task_id` and `wait_ms: 10000`; if it remains pendin
 
 For session-isolation acceptance, submit a second task with a different key and nonce. Have A's operator verify a different Claude session ID and working directory, and confirm the second durable result from B. If A intentionally uses the optional manual interactive-channel mode, verify its unsolicited channel delivery separately; that mode keeps one conversation across tasks.
 
-To recover an unfinished controller-managed task, retain its existing `task_id` and have A's operator follow the saved-session procedure in [the A guide](claude.md#resume-one-saved-task). A runs `task-bridge-agent resume --task-id <TASK_ID> --config agent.json` using the original state directory and Claude profile. It resumes that task's original context and then exits; B continues querying the same task ID. Unknown command or reconciliation checks still apply, and missing A state is not repaired by submitting a replacement task.
-
 If A is unavailable, stop at “B authenticated; end-to-end test pending” and retain the task ID if one was already submitted. Do not configure or acquire A's token as part of B setup unless the user also requested that separate work.
+
+## Resume an existing task
+
+Retain the original `task_id`. Review its task and command records and B's journal before requesting recovery. Use the same B credential that submitted it, with the original workspace configured and the journal reconciled. A keeps its normal `task-bridge-agent run` process online with the original state directory and Claude profile; no manual A resume command is needed.
+
+Call the B MCP tool `tasks_resume`:
+
+```json
+{
+  "task_id": "<EXISTING_TASK_ID>",
+  "idempotency_key": "resume-<NEW_UUID>"
+}
+```
+
+The result contains the same `task_id` and a durable `resume_request` with a `request_id` and `state`. `pending` means it is waiting for the original A; it remains pending if A is offline. `accepted` means A has claimed this one attempt, not that Claude has started or the task has finished. Use `tasks_get` with the same task ID to inspect its latest `resume_request`, or continue bounded waiting with `tasks_wait`:
+
+```json
+{
+  "task_id": "<EXISTING_TASK_ID>",
+  "wait_ms": 10000
+}
+```
+
+If the request's response is lost, retry `tasks_resume` with the same key. That key returns its original receipt even after a newer attempt exists. If the receipt is `failed`, inspect its `error` and resolve the cause before using a new key to explicitly request another attempt. The same request is never consumed twice, and reconnecting A does not retry a failed attempt. A new key is refused while an existing request is pending or accepted.
+
+Recovery keeps the original task, prompt, deadline, Claude session UUID, and working directory. It refreshes assignment and relay credentials. Unknown or running commands, incomplete reconciliation, quarantine, active assignments, expired deadlines, and terminal tasks can block a new request. Missing A state or transcript fails recovery without creating a replacement conversation; see [the A guide](claude.md#resume-one-saved-task). Do not submit a new task or change a command's operation key to bypass uncertain execution.
 
 ## Preserve recovery state and report
 

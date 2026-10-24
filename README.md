@@ -102,26 +102,29 @@ bin/task-bridge-agent run --config agent.json
 
 `doctor` 只检查本地配置、Claude 路径和设备凭据是否存在，不启动 Claude、不验证账号登录，也不连接 broker。`run` 保持在线，由控制器接收 channel 通知。新任务使用新 UUID、独立工作目录及本机 HTTP MCP 转发，启动 `claude --print`；Claude transcript 保存在用户的正常 Claude 配置目录中。子进程复用用户的 Claude 登录；不要求用户另建 API key。
 
-未完成的任务保留 `state_dir` 中的会话映射和工作目录。先停止同一 A 身份的 `run`，核对任务、命令和 B journal，再显式恢复一个任务：
+未完成的任务保留 `state_dir` 中的会话映射和工作目录。A 保持 `run` 在线；核对任务、命令和 B journal 后，从 B 的 MCP 宿主调用 `tasks_resume`：
 
-```sh
-bin/task-bridge-agent resume --task-id <task_id> --config agent.json
+```json
+{
+  "task_id": "<task_id>",
+  "idempotency_key": "resume-<new_uuid>"
+}
 ```
 
-该命令使用原 Claude session UUID 和工作目录，重新获得 broker assignment，并创建新的 relay 配置和凭据；只处理指定任务，结束后退出。它不绕过 unknown 命令、reconcile 或工作区隔离检查。会话映射或 Claude transcript 缺失时失败，不退回新会话。终态清理本地映射和任务目录，不删除 Claude 用户配置中的 transcript；完整步骤见 [运维文档](docs/operations.md#恢复一个已保存的任务)。
+工具返回原 `task_id` 和持久化的 `resume_request`。A 消费该显式请求后，使用原 Claude session UUID 和工作目录、新 assignment 及 relay 凭据恢复会话。`pending` 表示等待 A，`accepted` 表示请求已被领取；任务结果仍通过同一 ID 的 `tasks_get` / `tasks_wait` 查询。响应不明时复用同一个 key；本次恢复失败后核对原因，再用新 key 请求另一次尝试。unknown、reconcile 与隔离检查保持有效，缺失会话映射或 transcript 时不创建新会话。完整步骤见 [运维文档](docs/operations.md#恢复一个已保存的任务)。
 
 自动记忆和普通 hooks 在子会话中关闭。用户及管理层的 Claude 规则仍可能适用；这些规则与前一个任务的聊天历史不同。该行为隔离任务上下文，不提供操作系统沙箱。参数、权限和恢复边界见 [运维步骤](docs/operations.md)。
 
 可选的手工交互 channel 模式仍使用 `examples/claude-mcp.json`，它在多个任务之间保留同一会话。启用前先停止同一 agent 身份的控制器；准入和启动步骤见 [兼容性记录](docs/compatibility.md)。新控制器的 headless 子进程不加载 development channel。
 
-B 工具包括 `tasks_submit`、`tasks_run`、`tasks_get`、`tasks_wait`、`tasks_cancel`、`tasks_list` 和 `tasks_events`。控制器接收分派并启动 Claude；子进程通过 relay 调用 `task_accept`，使用 `bash` 工具，再调用 `task_complete` 保存结果。Claude 的终端回复和进程退出码不代替服务端最终结果。完整工具字段及恢复语义见 [协议文档](docs/protocol.md)。
+B 工具包括 `tasks_submit`、`tasks_run`、`tasks_get`、`tasks_wait`、`tasks_resume`、`tasks_cancel`、`tasks_list` 和 `tasks_events`。控制器接收并领取分派后启动 Claude；子进程通过 relay 使用 `bash` 工具，再调用 `task_complete` 保存结果。Claude 的终端回复和进程退出码不代替服务端最终结果。完整工具字段及恢复语义见 [协议文档](docs/protocol.md)。
 
 新提交的 `prompt` 必须使用英文：1–8192 字节，仅允许可打印 ASCII 与 TAB/LF/CR，并且至少包含一个 `A–Z` 或 `a–z`。这项规则同时适用于 `tasks_submit` 和 `tasks_run`。已有任务的相同 key、相同内容重试仍读取原记录；恢复旧任务不会重新校验或改写其原始 prompt。
 
 ## 行为边界
 
 - 一台服务端进程配合本地 SQLite；一个 A 身份固定工作区，工作区串行处理任务，默认每个任务使用不同 Claude 会话。
-- A 子进程未提交最终结果便退出时，控制器报错并断开，保留原会话映射和工作目录；不自动重试。核对后使用显式 `resume` 继续同一任务。
+- A 子进程未提交最终结果便退出时，控制器保留原会话映射和工作目录，断开旧连接后自动重连并等待 B 的 `tasks_resume`。重连及旧 interrupted 通知不会自动重跑任务；每个恢复请求最多领取一次。
 - 等待请求结束或断线不等于任务结束。使用返回的 `task_id`、`command_id` 查询已保存的状态。
 - 相同逻辑命令重试复用 `operation_key`。结果不明时先查询；更换 key 无法避免重复副作用。
 - 无法确认是否启动或是否完成的命令进入 `unknown`，需要核对。任意 Bash 副作用不具备 exactly-once 保证。

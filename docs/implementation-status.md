@@ -5,9 +5,9 @@
 ## 已实现
 
 - A 控制器：`task-bridge-agent` 接收 broker 通知，为每个新任务创建不同的 Claude session UUID、工作目录与独立进程，通过限于该任务的本机 HTTP MCP relay 调用工具。复用用户正常 Claude 登录，保留 transcript，关闭自动记忆与普通 hooks；用户及 managed 规则仍可能适用。
-- A 会话恢复：未完成任务保留本地 session 映射与 cwd；`resume --task-id` 先核对 broker 恢复条件，再以原 Claude UUID 和 cwd 恢复原对话，每次重建 relay 配置和凭据。只处理指定任务后退出；缺失映射或 transcript 不退回新会话，unknown、reconcile 和工作区隔离仍阻止恢复。
+- A 会话恢复：未完成任务保留本地 session 映射与 cwd；常驻控制器在 B `tasks_resume` 创建持久请求后，核对本地状态并原子领取请求，再以原 Claude UUID 和 cwd 恢复原对话，每次重建 relay 配置和凭据。失败后断开旧连接再重连等待，不自动消费同一请求第二次；缺失映射或 transcript 不创建新会话，unknown、reconcile 和工作区隔离仍阻止恢复。
 - A 协议：认证后的远程 WebSocket MCP、官方 SDK 协议协商、channel 通知、任务领取/恢复、远程 Bash、命令查询/分页/取消、进度与完成工具。可选手工交互 channel 模式保留同一对话，不提供逐任务会话隔离。
-- B：官方 SDK stdio MCP、任务提交/查询/等待/取消/列表/事件、独立 WebSocket 连接、Linux Bash 与 Windows Git Bash 执行器。新任务 prompt 限制为 1–8192 字节的可打印 ASCII 与 TAB/LF/CR，且至少包含一个英文字母；旧任务的精确幂等重试、查询和恢复保留原 prompt。
+- B：官方 SDK stdio MCP、任务提交/查询/等待/恢复/取消/列表/事件、独立 WebSocket 连接、Linux Bash 与 Windows Git Bash 执行器。`tasks_resume` 保留原 task 并返回 pending/accepted/failed 的持久 receipt；同 key 读取原请求，新 key 明确请求另一次尝试。新任务 prompt 限制为 1–8192 字节的可打印 ASCII 与 TAB/LF/CR，且至少包含一个英文字母；旧任务的精确幂等重试、查询和恢复保留原 prompt。
 - 持久化：SQLite WAL/FULL、Goose 迁移、任务/命令幂等、逐消息 ACK、连接内已发送集合、未确认消息至少间隔 5 秒重传与重连立即重放、连接代次与 assignment fencing。
 - 执行：受限目录解析、独立进程、stdout/stderr 字节流、超时、普通进程树取消、输出配额、有界等待和每连接并发限制。
 - 路由与诊断：按 B Hello 实际上报的工作区子集分派和授权；未配置工作区保持排队。命令执行诊断限码 64 字节、消息 2048 字节，持久化并随 reconcile 回传；正常非零退出仍为 exited。
@@ -19,7 +19,7 @@
 
 ## 自动化验证
 
-2026-10-24 的代码（含会话恢复与英文 prompt 校验）在 Windows amd64 与 WSL Ubuntu Linux amd64 均通过全部包 `go test -count=1`、`go vet` 和全部命令的 `CGO_ENABLED=0` 构建；Linux 全部包 race 通过。`go mod verify`、gofmt 和 diff 检查通过。server/B 既有基线另有 Windows race 记录；本轮没有新增 Windows 全量 race 结论。具体版本、命令和范围见 [compatibility.md](compatibility.md)。
+2026-10-24，本轮 B MCP 恢复入口与常驻 A 生命周期在 Windows amd64、WSL Ubuntu Linux amd64 均通过全部包 `go test -count=1 -timeout=10m ./...`、`go vet ./...` 和全部命令的 `CGO_ENABLED=0` 构建；Linux 全部包 race 通过。`go mod verify`、全部 Go 文件的 gofmt 和 diff 检查通过。远程 CI 以对应提交的 [GitHub Actions 记录](https://github.com/Zxilly/task-bridge/actions/workflows/ci.yml)为准。具体版本、命令和范围见 [compatibility.md](compatibility.md)。
 
 测试覆盖：
 
@@ -41,13 +41,17 @@ A 控制器基线已通过的定向检查包括：
 - A CLI `doctor`：配置和可执行文件路径检查不启动 Claude、不创建状态目录、不联网、不输出设备 token。
 - 静态配置：8 份示例 JSON、两份指南中的 6 个 JSON 示例均可解析，A/B smoke payload 一致；GoReleaser 三个 build ID 的配置检查通过。
 
-2026-10-24 的增量检查已在 Windows 与 Linux 通过：
+2026-10-24、提交 `5ab3291` 的恢复基线检查已在 Windows 与 Linux 通过：
 
 - 真实 broker 配合模拟 launcher：interrupted 与未领取任务恢复同一个 session UUID/cwd，获得新 assignment 与 relay token；unknown 命令、缺失映射或另一 agent 持有分派时拒绝启动；终态只清理本地状态。
 - session store：持久化 broker/task/workspace/agent 身份绑定，拒绝损坏或不匹配清单，并发创建不覆盖既有映射，保留崩溃残留，仅删除已验证的任务目录，检查符号链接边界。
 - 真实 launcher helper 进程：fresh/resume 参数、同任务 UUID/cwd、新 relay 配置与凭据、环境、取消，以及缺失 transcript 失败后不创建新会话。
 - 父进程强杀 helper：父进程无法运行 deferred cleanup 时受管 CLI 仍停止；另覆盖普通退出、重复关闭与启动失败清理。
 - model、broker、client：英文 prompt 字节与字符边界、拒绝时无分派副作用、旧任务精确重试和实际 SDK 到 broker 的请求链路。
+
+本轮完整恢复测试通过官方 B MCP SDK、真实 WebSocket、SQLite、Bash 和模拟 launcher 驱动常驻 A：恢复原 task/UUID/cwd，更新 assignment 和 relay token；同 key 不重新启动，新 key 明确请求另一次尝试；缺失本地映射记录 failed，A 继续在线等待。A MCP 的 11 个上游工具 schema、恢复通知字段及 32 KiB 边界检查也在两平台通过。
+
+本机构建的 A 已确认只提供 run/doctor 运维入口，resume 返回 unknown command；真实 B stdio 子进程已验证八个工具。8 份示例 JSON 和两指南的 8 个 JSON 示例均通过静态检查。
 
 本机 Claude Code 2.1.283 仅执行过版本、帮助与登录命令帮助检查；模拟 launcher 和 SDK 客户端不调用真实 Claude 推理。控制器的实际模型行为、连续任务隔离及原 transcript 恢复仍需真实账号验收，不能以进程退出码或普通文本替代 broker 的持久化 `task_complete` 结果。
 

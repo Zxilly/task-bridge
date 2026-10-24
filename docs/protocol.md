@@ -40,7 +40,8 @@ channel 示例：
 | --- | --- | --- |
 | `task_accept` | `task_id, assignment_id` | 接受 offered 分派；同一有效分派可重复接受 |
 | `task_get` | `task_id` | 返回任务与最近命令快照 |
-| `task_resume` | `task_id, previous_assignment_id` | 核对 interrupted 任务，签发新 assignment |
+| `task_resume` | `task_id` | 控制器提供 `resume_request_id` 领取 B 的恢复请求；兼容手工 MCP 提供 `previous_assignment_id`，有 pending 请求时禁止绕过。两种 ID 必须严格二选一，均最多 128 字节 |
+| `task_resume_failed` | `task_id, resume_request_id, error_code, message` | 仅供控制器记录恢复失败，返回 TaskResumeResult；error_code 最多 64 字节、message 最多 1024 UTF-8 字节，不向子会话 relay 暴露 |
 | `bash` | `task_id, assignment_id, operation_key, command` | `cwd, timeout_ms, wait_ms`；命令固定在该任务的 B 工作区执行 |
 | `command_get` | `task_id, command_id` | 返回命令元数据及首段输出 |
 | `command_wait` | `task_id, command_id` | `wait_ms`；有界等待，任务执行期限不变 |
@@ -51,7 +52,7 @@ channel 示例：
 
 A 的执行、进度与完成请求都要求当前连接和有效 assignment。历史查询不延续旧执行授权。不能仅凭“当前任务”推断请求属于哪个任务。
 
-控制器的 `task-bridge-agent resume --task-id <task_id>` 与协议工具 `task_resume` 分工不同：前者读取本地保存的 Claude session 映射，后者由 broker 核对 interrupted 状态并签发新 assignment。控制器先完成该授权，再使用原 Claude UUID、原 cwd 和本次新的 relay 配置恢复对话。unknown 命令、未完成的 reconcile 或工作区隔离仍会阻止恢复。退出发生在领取前、已经重新排队的任务等待自己的新 offer；控制器先调用 `task_accept` 确认分派归属，再打开原会话。命令只处理指定任务后退出；缺失映射或 transcript 时不创建新会话兜底。
+恢复通知在 `meta` 中增加可选字符串 `resume_request_id`。尚无 assignment 的旧 queued 任务可带空 `assignment_id` 和非空请求 ID，实际 assignment 在领取请求时签发。默认控制器只在收到匹配的持久恢复请求后读取本地 Claude session 映射，通过 `task_resume` 原子领取请求，再使用原 Claude UUID、原 cwd 和本次新 relay 配置恢复对话。无请求 ID 的 interrupted 通知不会启动 Claude。unknown 命令、未完成的 reconcile 或工作区隔离仍阻止恢复；缺失映射或 transcript 时上报 `task_resume_failed`，不创建新会话兜底。该工具记录请求失败，不提交任务终态；诊断使用受限的公开错误信息，不上传 CLI 原始日志。
 
 `bash` 默认执行超时 120 秒，上限 15 分钟，且受任务剩余期限限制。默认等待 30 秒；`wait_ms` 上限 120 秒。等待结束后 `pending` 表示命令是否尚未结束，后续通过 command ID 查询。取消 MCP 请求只结束该次等待；业务停止使用 cancel 工具。
 
@@ -83,6 +84,7 @@ B 的 stdio 工具由官方 MCP Go SDK 托管。B 到 broker 的控制连接独�
 | `tasks_run` | 同 submit | `wait_ms`；提交后执行一次有界等待 |
 | `tasks_get` | `task_id` | 任务与最近命令快照 |
 | `tasks_wait` | `task_id` | `wait_ms`；超时返回 pending 与快照 |
+| `tasks_resume` | `task_id, idempotency_key` | 显式请求恢复原任务；返回原 task_id 与持久 resume_request，不等待任务完成 |
 | `tasks_cancel` | `task_id` | `reason`；区分取消申请和停止确认 |
 | `tasks_list` | 无 | `workspace_id, cursor, limit`；只列授权范围 |
 | `tasks_events` | `task_id` | `after_seq, limit`；读取进度事件 |
@@ -92,6 +94,18 @@ B 的 stdio 工具由官方 MCP Go SDK 托管。B 到 broker 的控制连接独�
 新任务 `prompt` 必须使用英文。`tasks_submit` 和 `tasks_run` 共用以下校验：1–8192 字节，仅允许 0x20–0x7E 的可打印 ASCII 以及 TAB（0x09）、LF（0x0A）、CR（0x0D），并至少包含一个 `A–Z` 或 `a–z`。非 ASCII 字符、其他控制字节或不含英文字母的内容返回 `invalid_arguments`，不创建任务、事件、命令或分派。这是确定性的字符约束，不执行自然语言识别。
 
 幂等重试先核对已存记录：相同 key、相同请求仍返回原任务，即使旧 prompt 不符合新的英文规则；相同 key、不同请求返回 `idempotency_conflict`。已存任务的查询和恢复不重验或改写原 prompt。该输入规则只约束新提交的任务描述，不改变命令输出或已有任务结果的编码。
+
+`tasks_resume` 只接受最初提交任务的 executor 凭据，并要求该 B 当前报告原工作区。`task_id` 最多 128 字节，`idempotency_key` 最多 200 字节；不接收新 prompt，不创建新 task，也不延长 deadline。新请求限于保留原 agent 的 interrupted 或 queued 任务；running/offered、终态、期限已过、其他活动分派、未核对命令或隔离工作区会被拒绝。
+
+返回形态为 `{"task_id":"...","resume_request":{...}}`。request 包含 `request_id, task_id, requester_id, idempotency_key, state, agent_id, created_at, updated_at`，按状态附带 `previous_assignment_id, assignment_id, connection_id, accepted_at, error`；Task 的 `resume_request` 字段提供最新请求摘要。
+
+| resume_request.state | 含义 |
+| --- | --- |
+| `pending` | 已持久化，等待原 A 领取；A 离线时保留，重连后再次交付 |
+| `accepted` | 已原子领取并获得新 assignment；不代表 Claude 已启动或任务已完成，继续用 tasks_get/tasks_wait 查询原 task |
+| `failed` | 本次请求已结束，error 说明原因；不自动再消费，处理原因后由 B 用新 key 请求另一次尝试 |
+
+同一 B 凭据下相同 key 的重试读取原 receipt，已有新请求也不会覆盖旧 key 的结果；将同一 key 用于不同 task 返回 `idempotency_conflict`。已有 pending/accepted 请求时，新 key 返回 `resume_pending`。重复 channel、SDK 响应丢失或 A 重连不重复领取 accepted 请求。最终任务结果仍由 `task_complete` 定义，不能把恢复请求的 accepted 当作 succeeded。
 
 列表默认每页 20 条，最多 50 条。cursor 是本实现的数字分页位置，列表变化时不提供固定快照分页保证。事件 `seq` 与列表 cursor 不可互换。
 

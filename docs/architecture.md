@@ -54,7 +54,7 @@ B 在 Hello 中报告本次实际配置的工作区子集，服务端核对归�
 
 1. B MCP 工具提交英文任务；broker 校验新 prompt 的 ASCII 和长度约束，在 SQLite 提交成功后返回 `task_id`。
 2. 调度器选择匹配且空闲的 A 和 workspace，持久化分派，向控制器发 channel 通知。
-3. 控制器核对任务，建立只绑定该任务的本机 MCP relay 并启动新的 Claude Code 会话；Claude 首先通过 relay 调用 `task_accept`，接受成功后才能执行命令。
+3. 控制器核对任务并先调用 `task_accept` 确认分派归属，再建立只绑定该任务的本机 MCP relay 并启动新的 Claude Code 会话；执行命令仍要求当前有效分派。
 4. Claude 通过 relay 发出 `bash` 请求，broker 建立持久命令并通过 B 控制连接派发。B 先写 journal，再启动 Bash。
 5. B 分块保存输出与终态并上传。broker 保存后确认，MCP 工具可以等待或分页查询。
 6. Claude 通过 relay 调用 `task_complete`；broker 保存不可变的最终结果，B 等待者读取同一份结果。控制器关闭 relay，并在确认终态后清理本地会话映射和任务工作目录；Claude profile 中的 transcript 保留，后继任务启动另一个会话。
@@ -67,7 +67,9 @@ channel 通知没有业务 ACK，`offered` 与 `running` 分开。长任务不�
 
 Claude 通过 `--tools ""` 关闭本地执行和文件工具，`--strict-mcp-config` 限定本次 MCP 配置，`--allowedTools` 批准该 relay 的工具。子会话关闭 auto memory 和普通 hooks，保留现有账号登录与 transcript 持久化。不同任务使用不同 transcript，同一任务显式恢复自己的 transcript。用户或 managed Claude 指令与管理策略仍可能生效；这不代表所有全局设置、文件系统或账号资源都被隔离。
 
-控制器不解析 Claude 普通文本作为任务结果。子进程未完成任务即退出时保留会话映射和 cwd；普通 `run` 遇到已保存会话或 interrupted 分派时停止，并要求显式 `resume --task-id`。恢复命令只处理该任务后退出：先完成 broker 的恢复授权，获取新 assignment，再启动原 Claude 会话；未领取便重新排队的任务则等待自己的新 offer。未知命令、reconcile 与工作区隔离约束不变。映射或 transcript 缺失时失败，不新建会话兜底，也不更换 operation key 重试。
+控制器不解析 Claude 普通文本作为任务结果。子进程未完成任务即退出时保留会话映射和 cwd，断开旧连接使 broker 确认 interruption，然后重连保持在线。没有恢复请求的 interrupted 通知不启动会话；B 必须用 `tasks_resume` 显式创建持久请求。broker 将带 `resume_request_id` 的通知发给原 agent；控制器先核对本地状态，再调用 `task_resume` 原子领取请求、获取新 assignment，最后启动原 Claude 会话。队列去重同时区分 task、assignment 与恢复请求，旧通知不能覆盖新请求。
+
+每个恢复请求只有一次领取机会；pending 可在原 A 上线后继续交付，accepted 后连接中断或子进程失败会记录 failed，不因再次重连而启动第二次。B 重试相同 key 读取原 receipt，新 key 才表示另一次显式尝试。未知命令、reconcile、工作区隔离、原提交凭据与原 agent 的归属约束保持有效。映射或 transcript 缺失时记录失败并继续等待，不创建新会话兜底，也不更换 operation key 重试。
 
 手工交互 channel 模式仍可直接连接 `/mcp/agent`，但同一 Claude 会话会连续处理多个任务；它与默认控制器不能同时占用同一 A 身份。headless 子进程不依赖 custom development channel 的准入。
 

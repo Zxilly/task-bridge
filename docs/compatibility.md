@@ -1,6 +1,6 @@
 # 兼容性与验证记录
 
-记录日期：2026-10-24。此文件区分代码实现、可自动化的模拟测试和需要真实账号/平台的验收。2026-10-23 的完整回归记录保留为基线；本轮会话恢复和英文输入校验另列检查范围。
+记录日期：2026-10-24。此文件区分代码实现、可自动化的模拟测试和需要真实账号/平台的验收。2026-10-23 与提交 `5ab3291` 的完整回归记录保留为基线；新增 B MCP 恢复入口的检查范围单列，不沿用基线的全量通过结论。
 
 ## 版本
 
@@ -31,7 +31,7 @@
 | Linux vet / build | 通过 | `go vet ./...`；`CGO_ENABLED=0 go build -trimpath ./cmd/...` |
 | Linux race | 全部包通过 | `go test -race -count=1 -timeout=10m ./...` |
 | SQLite 备份与恢复测试 | 通过 | Windows Go 1.26.0 普通测试；WSL Go 1.26.3 race 测试，覆盖并发快照、凭据失效与原数据保留 |
-| 真正编译的 B CLI stdio | Windows / Linux 通过 | 官方 Go SDK host 通过真实子进程 stdio 列出七个工具并完成任务；stdout/stderr 不混入协议，host EOF 停止 Bash、进程退出并释放 journal 锁 |
+| 真正编译的 B CLI stdio | Windows / Linux 通过 | 官方 Go SDK host 通过真实子进程 stdio 发现当时的工具集合并完成任务；stdout/stderr 不混入协议，host EOF 停止 Bash、进程退出并释放 journal 锁 |
 | 快照回滚与真实 B journal | Windows / Linux 通过 | 实际 SQLite 快照回滚，显式 reconcile 区分 1 known / 1 orphan；known 证据重放、orphan 不重建，B 工作区中两个文件的副作用都仅一次 |
 | 5 A / 10 B 小规模模拟 | Windows / Linux 通过 | 真实 MCP WS A 协议客户端、B WS/独立 journal/SQLite/Bash；五个主任务完成，五个无 A 任务保持 queued，额外后继任务验证串行接棒 |
 | 慢 WS 消费端断开与重放 | Windows / Linux race 通过 | 对端停止读取后被断开；100 条各约 32 KiB 的未 ACK outbox 消息保留，正常读取消费端重连后全部重放、逐 ID 确认并保持连接 |
@@ -68,7 +68,7 @@
 
 ## 逐任务 A 控制器验收
 
-`task-bridge-agent` 将 A 的连接生命周期与 Claude 会话生命周期分开。控制器用官方 Go MCP SDK 接收 broker 通知，每个新任务创建不同的 session UUID 和 cwd，通过只服务该任务的本机 HTTP MCP 转发工具。同一未完成任务可显式恢复自己的 UUID、cwd 和 Claude transcript，每次启动均创建新的 relay 配置和凭据。任务结果仍由 `task_complete` 提交；不把 CLI 的普通文本或成功退出当作任务完成。
+`task-bridge-agent` 将 A 的连接生命周期与 Claude 会话生命周期分开。控制器用官方 Go MCP SDK 接收 broker 通知，每个新任务创建不同的 session UUID 和 cwd，通过只服务该任务的本机 HTTP MCP 转发工具。B 通过 `tasks_resume` 请求恢复同一未完成任务的 UUID、cwd 和 Claude transcript；A 常驻领取请求，每次启动均创建新的 relay 配置和凭据。任务结果仍由 `task_complete` 提交；不把 CLI 的普通文本或成功退出当作任务完成。
 
 以下检查记录于 2026-10-23，对应逐任务控制器的初始实现；本轮新增恢复逻辑及全量回归见后续的 2026-10-24 记录。
 
@@ -83,7 +83,7 @@
 | GoReleaser 新 agent 配置 | 通过 | GoReleaser 2.18.3 `check`，平台归档包含 server、client、agent 三个 build ID |
 | 真实 Claude 模型运行 | 未执行 | 仅检查本机 CLI 帮助；没有调用推理来代替用户完成登录或验收 |
 
-2026-10-24 的增量检查：
+2026-10-24、提交 `5ab3291` 的恢复与英文输入基线。当时的恢复入口是手动 A CLI，以下结果不能替代新增 B MCP 入口的验证：
 
 | 定向检查 | 结果 | 范围 |
 | --- | --- | --- |
@@ -92,8 +92,21 @@
 | 本地 session store | Windows / Linux 通过 | broker/task/workspace/agent 身份绑定、清单持久化和损坏拒绝、并发创建不覆盖、崩溃残留保留，以及仅删除已验证任务目录；包含符号链接边界检查 |
 | 父进程强杀 | Windows / Linux 通过 | 真实 helper 进程验证父进程被强杀、无法执行 deferred cleanup 时受管 CLI 仍停止；覆盖普通退出、重复关闭和启动失败清理 |
 | 英文 prompt 校验 | Windows / Linux 通过 | model、broker、client 包测试；覆盖字符/字节边界、拒绝时无任务或分派副作用、旧任务精确重试，以及 SDK → WebSocket → broker 调用 |
-| 本轮全量回归 | Windows / Linux 通过 | 全部包 `go test -count=1`、`go vet`、全部命令 `CGO_ENABLED=0` 构建；Linux 全部包 race 通过；`go mod verify`、gofmt 和 diff 检查通过 |
+| `5ab3291` 基线全量回归 | Windows / Linux 通过 | 全部包 `go test -count=1`、`go vet`、全部命令 `CGO_ENABLED=0` 构建；Linux 全部包 race 通过；`go mod verify`、gofmt 和 diff 检查通过 |
 | 真实 Claude transcript 恢复 | 未执行 | 未调用真实模型；helper 进程不验证 Claude 自身的 transcript 读写或恢复行为 |
+
+新增 B MCP 恢复入口的检查：
+
+| 检查 | 结果 | 范围 |
+| --- | --- | --- |
+| A MCP 恢复工具 schema | Windows / Linux 通过 | 官方 SDK 发现 11 个上游工具；两种 task_resume 形式与 controller-only task_resume_failed 的必需字段、长度边界、未知字段拒绝和鉴权路由 |
+| 恢复 channel 线格式 | Windows / Linux 通过 | 实际 WebSocket 验证无请求 ID 时严格三个 metadata 字段，有请求 ID 时严格四个；支持空 assignment_id，并覆盖含恢复字段的 32 KiB 边界 |
+| 示例与入口指南 | 静态通过 | 8 份 examples JSON、两指南的 8 个 JSON 示例均可解析；A/B smoke 一致，恢复示例保留原 task_id，本地文档链接有效 |
+| B MCP → 常驻 A 恢复闭环 | Windows / Linux 通过 | 官方 B MCP SDK、真实 WebSocket、SQLite、Bash 与模拟 launcher；恢复原 task/UUID/cwd、新 assignment/token，同 key 不重新启动，新 key 明确再试；缺失映射记录 failed，A 继续在线 |
+| 实际 CLI 入口 | 通过 | 本机构建的 A 提供 run/doctor 运维命令，resume 返回 unknown command；真实 B stdio 子进程测试发现八个工具并覆盖正常任务与宿主 EOF |
+| 本轮全量回归 | Windows / Linux 通过 | 全部包 `go test -count=1 -timeout=10m ./...`、`go vet ./...`、全部命令 CGO_ENABLED=0 构建；Linux 全部包 race 通过；go mod verify、全部 Go 文件 gofmt 与 diff 检查通过 |
+| 远程 CI | [见 Actions](https://github.com/Zxilly/task-bridge/actions/workflows/ci.yml) | Linux、Windows、Linux race 和容器构建以对应提交的 GitHub Actions 记录为准 |
+| 真实 Claude 模型与 transcript | 未执行 | 不使用模拟 launcher、SDK 或 helper 结果代替真实 Claude 验收 |
 
 本机静态检查确认 Claude Code 2.1.283 提供 `--print`、`--session-id`、`--resume`、`--tools`、`--allowedTools`、`--strict-mcp-config`、`--mcp-config` 和 `--permission-prompts`。这些参数与 [CLI reference](https://code.claude.com/docs/en/cli-reference#cli-flags) 对照过，但未使用真实账号执行付费推理。自动化测试可以检查会话参数、cwd、relay 授权、进程清理和 broker 状态；真实 Claude 是否保存、恢复上下文并按要求调用工具仍须单独验收。
 
@@ -106,15 +119,15 @@ bin/task-bridge-agent doctor --config agent.json
 bin/task-bridge-agent run --config agent.json
 ```
 
-1. 从 B 提交带唯一 ASCII 标记的英文只读任务，检查 controller 收到分派并启动 Claude 子进程，随后由 Claude 调用 `task_accept`。
+1. 从 B 提交带唯一 ASCII 标记的英文只读任务，检查 controller 收到分派，先完成 `task_accept` 再启动 Claude 子进程，Claude 首先读取 `task_get`。
 2. Claude 通过桥接 Bash 返回 B 的 hostname、cwd 和标记，明确调用 `task_complete`；B 查询得到同一个持久结果。
 3. 提交第二个独立任务，记录不同的 Claude session UUID、工作目录及第二个 task_id/result，确认第一个子进程已经结束。
 4. 检查新任务使用 `--session-id`，MCP 配置只指向当前任务 relay，CLI 文本没有被当作最终结果。
-5. 在另一个受控未完成任务中停止控制器，确认子进程停止、session 映射与 cwd 保留；先核对任务、命令和 B journal，排除 unknown 或待处理 reconcile 后，运行 `task-bridge-agent resume --task-id <task_id> --config agent.json`。
-6. 确认 broker 先完成恢复授权，Claude 以原 UUID、原 cwd 和 `--resume` 继续原上下文，但使用新的 assignment、relay 凭据和配置；B 仍查询同一个 task ID，并得到持久终态。
-7. 核对终态仅清理控制器持有的映射和任务目录，Claude profile 中 transcript 保留；映射或 transcript 缺失时失败，不创建新会话。不要直接重新执行结果不明的命令。
+5. 在另一个受控未完成任务中使 Claude 子进程退出，确认 session 映射与 cwd 保留、A 重连保持在线且不自动重跑。核对任务、命令和 B journal，排除 unknown 或待处理 reconcile 后，由 B MCP 调用 `tasks_resume`，参数为原 task_id 和新的 idempotency_key。
+6. 记录 pending → accepted 的请求状态；确认 broker 先完成恢复授权，Claude 以原 UUID、原 cwd 和 `--resume` 继续原上下文，使用新的 assignment、relay 凭据和配置。B 仍查询同一个 task ID，并得到持久终态；accepted 本身不算验收成功。
+7. 核对终态仅清理控制器持有的映射和任务目录，Claude profile 中 transcript 保留；映射或 transcript 缺失时请求失败，不创建新会话，A 仍在线。同 key 重试不能再次启动失败请求；核对原因后新 key 才表示另一次明确尝试。
 
-记录日期、平台、二进制/Claude 版本、登录方式（不含凭据）、各 task_id/session_id、恢复前后 assignment、执行标记及终态。`doctor` 不启动 Claude 或连接 broker，因此只算本地配置检查，不算该验收通过。
+记录日期、平台、二进制/Claude 版本、登录方式（不含凭据）、各 task_id/session_id、request_id 与请求状态、恢复前后 assignment、执行标记及终态。`doctor` 不启动 Claude 或连接 broker，因此只算本地配置检查，不算该验收通过。
 
 ## 可选手工交互 channel smoke
 

@@ -50,7 +50,7 @@ Windows 的 `root` 使用 Windows 路径，`bash_path` 通常为 `C:\Program Fil
 
 ## A 控制器与 Claude 登录
 
-默认 A 使用 `task-bridge-agent run`。控制器接收 broker 的 channel 通知，并为每个任务启动一个新的 `claude --print` 子进程。Claude 通过当前任务的本机 HTTP MCP relay 调用远程工具，不直接在 headless 模式加载 development channel。
+默认 A 使用 `task-bridge-agent run`。控制器接收 broker 的 channel 通知，为每个新任务启动独立的 `claude --print` 子进程，并响应 B 发起的原会话恢复请求。Claude 通过当前任务的本机 HTTP MCP relay 调用远程工具，不直接在 headless 模式加载 development channel。
 
 在运行控制器的同一个系统账号下安装 Claude Code，并完成 `claude auth login`。已有有效登录可以直接复用。不要复制认证文件或为了运行控制器切换为 API key。`--bare` 不使用订阅 OAuth，因此默认启动参数不使用它。
 
@@ -84,15 +84,20 @@ bin/task-bridge-agent run --config agent.json
 
 ### 恢复一个已保存的任务
 
-子进程未完成任务便退出、处理任务时连接中断，或普通 `run` 遇到已保存的会话或 interrupted 分派时，控制器报错，不自动重试。先检查原 task/command、B journal 与进程证据，停止同一 A 身份的其他控制器，保留原 `agent.json`、`state_dir` 和 Claude profile，再运行：
+子进程未完成任务便退出或处理任务时连接中断，控制器会断开旧上游连接，再自动重连等待显式请求。没有 `resume_request_id` 的 interrupted 通知只用于保持待恢复状态，不会启动 Claude。保留原 `agent.json`、`state_dir` 和 Claude profile，让同一 A 身份的控制器保持 `run` 在线。先检查原 task/command、B journal 与进程证据，再由最初提交任务的 B 凭据通过 MCP 调用 `tasks_resume`：
 
-```sh
-bin/task-bridge-agent resume --task-id <task_id> --config agent.json
+```json
+{
+  "task_id": "<task_id>",
+  "idempotency_key": "resume-<new_uuid>"
+}
 ```
 
-命令只处理指定任务，成功或失败后退出，不继续领取其他任务。对 interrupted 任务，控制器先调用 broker 的 `task_resume` 获取新 assignment，再以原 Claude UUID 和 cwd 启动会话；仍有未知命令、尚未完成的 reconcile 或工作区隔离时，broker 会拒绝恢复。若上次退出发生在 `task_accept` 之前，任务已经重新排队，则等待该任务的新 offer，由控制器先调用 `task_accept` 确认分派归属，再打开原 Claude 会话。已处于终态的任务只清理本地映射和目录，不启动 Claude。
+响应包含原 `task_id` 与 `resume_request`。`pending` 表示请求已保存，原 A 离线时保持待领取；`accepted` 表示 A 已原子领取本次请求并获得新 assignment，不表示 Claude 已启动或任务已完成。A 使用原 UUID/cwd 和新的 relay 配置、凭据继续对话，任务结果仍从同一 ID 的 `tasks_get` / `tasks_wait` 读取。任务完成后 A 继续等待后续任务，不需要手动切换 CLI 模式。
 
-缺失、损坏或身份不匹配的本地会话映射会使恢复失败；Claude 找不到原 transcript 时也直接失败，不使用新 UUID 兜底。旧版未保存 transcript 的任务不能凭 task ID 重建原上下文。不要删除状态文件、更换命令 key 或重新提交任务来绕过未知结果。已存任务的原始 prompt 不因新英文提交规则被改写或拒绝；其他恢复校验保持不变。
+同一次请求重试使用同一个 `idempotency_key`，即使已有更新的恢复尝试，也返回该 key 对应的历史 receipt。`failed` 的请求不会因重连再次执行；核对 `resume_request.error` 并处理原因后，用新 key 明确请求另一次尝试。已有 pending/accepted 请求时不能叠加新尝试。新请求要求原 task 仍可恢复、B 在线并已完成核对；running/offered、终态、期限已过、未知命令或工作区隔离会阻止新请求，恢复不会延长原 deadline。
+
+缺失、损坏或身份不匹配的本地会话映射会使恢复请求失败；Claude 找不到原 transcript 时也直接失败，不使用新 UUID 兜底，控制器继续在线等待。旧版未保存 transcript 的任务不能凭 task ID 重建原上下文。不要删除状态文件、更换命令 key 或重新提交任务来绕过未知结果。`tasks_resume` 不接收新 prompt；已存任务的原始 prompt 不因新英文提交规则被改写或拒绝。
 
 ## Compose 与 Caddy
 
