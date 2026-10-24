@@ -155,6 +155,9 @@ func (b *Broker) ClientEvent(ctx context.Context, c *ClientPeer, m model.Envelop
 				if !task.Terminal() && task.State != "cancel_requested" {
 					task.State = "interrupted"
 					task.LeaseUntil = 0
+					if e = tx.FailTaskResume(&task, "reconciliation_required", "a command outcome became unknown; reconcile it before requesting another attempt", "pending", "accepted"); e != nil {
+						return e
+					}
 					if e = tx.SaveTask(task); e != nil {
 						return e
 					}
@@ -369,6 +372,9 @@ func (b *Broker) Admin(ctx context.Context, method string, raw json.RawMessage) 
 			t.Unresolved = true
 			t.Summary = a.Reason
 			t.LeaseUntil = 0
+			if e = tx.FailTaskResume(&t, "task_abandoned", "the task was abandoned and cannot resume", "pending", "accepted"); e != nil {
+				return e
+			}
 			if e = tx.SaveTask(t); e != nil {
 				return e
 			}

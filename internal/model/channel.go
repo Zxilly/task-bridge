@@ -11,9 +11,10 @@ type ChannelNotification struct {
 // ChannelMetadata contains task routing identifiers. This is the channel's
 // "meta" field, distinct from the standard MCP "_meta" field.
 type ChannelMetadata struct {
-	TaskID       string `json:"task_id"`
-	AssignmentID string `json:"assignment_id"`
-	WorkspaceID  string `json:"workspace_id"`
+	ResumeRequestID string `json:"resume_request_id,omitempty"`
+	TaskID          string `json:"task_id"`
+	AssignmentID    string `json:"assignment_id"`
+	WorkspaceID     string `json:"workspace_id"`
 }
 
 // ChannelNotifier sends a typed notification; success does not acknowledge

@@ -39,8 +39,15 @@ func TestBuiltClientStdioAndHostEOF(t *testing.T) {
 	}
 	t.Cleanup(func() { host.Close() })
 	listed, e := host.ListTools(f.ctx, nil)
-	if e != nil || len(listed.Tools) != 7 {
+	if e != nil || len(listed.Tools) != 8 {
 		t.Fatalf("stdio tool listing: %v %+v", e, listed)
+	}
+	foundResume := false
+	for _, entry := range listed.Tools {
+		foundResume = foundResume || entry.Name == "tasks_resume"
+	}
+	if !foundResume {
+		t.Fatal("stdio tool listing omitted tasks_resume")
 	}
 	submit := tool(t, f.ctx, host, "tasks_submit", map[string]any{"workspace_id": "demo", "prompt": "Verify real stdio transport.", "idempotency_key": "stdio-1"})
 	id, assignment := accept(t, f)

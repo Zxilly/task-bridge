@@ -140,6 +140,9 @@ func (b *Broker) AgentDisconnected(p model.Principal, id string) {
 					t.State = "interrupted"
 				}
 				t.LeaseUntil = 0
+				if e = tx.FailTaskResume(&t, "agent_disconnected", "the claiming controller disconnected; request another attempt from B", "accepted"); e != nil {
+					return e
+				}
 				if e = tx.SaveTask(t); e != nil {
 					return e
 				}
@@ -236,6 +239,9 @@ func (b *Broker) Recover(ctx context.Context) error {
 					t.State = "interrupted"
 				}
 				t.LeaseUntil = 0
+				if e = tx.FailTaskResume(&t, "broker_restarted", "the broker restarted after this attempt was claimed; request another attempt from B", "accepted"); e != nil {
+					return e
+				}
 				if e = tx.SaveTask(t); e != nil {
 					return e
 				}
@@ -349,7 +355,7 @@ func (b *Broker) tick(ctx context.Context) {
 					continue
 				}
 				for _, a := range b.agents {
-					if a.p.WorkspaceID == t.WorkspaceID && !agentBusy[a.p.AgentID] {
+					if a.p.WorkspaceID == t.WorkspaceID && !agentBusy[a.p.AgentID] && (t.AgentID == "" || t.AgentID == a.p.AgentID) {
 						t.State = "offered"
 						t.AssignmentID = uuid.NewString()
 						t.ConnectionID = a.id
@@ -375,16 +381,22 @@ func (b *Broker) tick(ctx context.Context) {
 					a.lastOffer = now
 					content := "New task. Call task_accept with the task_id and assignment_id, then use the remote bash tool and task_complete.\n" + t.Prompt
 					if t.State == "interrupted" {
-						content = "Interrupted task. Inspect task_get, then explicitly call task_resume with previous_assignment_id before executing anything.\n" + t.Prompt
+						content = "Interrupted task. Await an explicit resume request from the original B submitter.\n" + t.Prompt
+					}
+					resumeID := ""
+					if t.ResumeRequest != nil && t.ResumeRequest.State == "pending" {
+						resumeID = t.ResumeRequest.ID
+						content = "B requested resuming this task's original saved conversation. The controller must claim resume_request_id using task_resume before starting Claude.\n" + t.Prompt
 					}
 					notices = append(notices, notice{
 						a: a,
 						notification: model.ChannelNotification{
 							Content: content,
 							Meta: model.ChannelMetadata{
-								TaskID:       t.ID,
-								AssignmentID: t.AssignmentID,
-								WorkspaceID:  t.WorkspaceID,
+								ResumeRequestID: resumeID,
+								TaskID:          t.ID,
+								AssignmentID:    t.AssignmentID,
+								WorkspaceID:     t.WorkspaceID,
 							},
 						},
 					})
@@ -471,6 +483,8 @@ type Args struct {
 	TaskID               string          `json:"task_id,omitempty"`
 	AssignmentID         string          `json:"assignment_id,omitempty"`
 	PreviousAssignmentID string          `json:"previous_assignment_id,omitempty"`
+	ResumeRequestID      string          `json:"resume_request_id,omitempty"`
+	ErrorCode            string          `json:"error_code,omitempty"`
 	CommandID            string          `json:"command_id,omitempty"`
 	OperationKey         string          `json:"operation_key,omitempty"`
 	Command              string          `json:"command,omitempty"`
@@ -504,7 +518,7 @@ func parse(raw json.RawMessage) (Args, error) {
 	if a.WaitMS < 0 || a.WaitMS > 120000 || a.TimeoutMS < 0 || a.TimeoutMS > 900000 || a.Cursor < 0 || a.AfterSeq < 0 {
 		return a, model.Err("invalid_arguments", "numeric argument outside supported range")
 	}
-	for _, id := range []string{a.TaskID, a.AssignmentID, a.PreviousAssignmentID, a.CommandID, a.WorkspaceID, a.IdempotencyKey, a.OperationKey} {
+	for _, id := range []string{a.TaskID, a.AssignmentID, a.PreviousAssignmentID, a.ResumeRequestID, a.CommandID, a.WorkspaceID, a.IdempotencyKey, a.OperationKey} {
 		if len(id) > 200 {
 			return a, model.Err("invalid_arguments", "identifier exceeds 200 bytes")
 		}
@@ -629,6 +643,22 @@ func (b *Broker) CallAgent(ctx context.Context, p model.Principal, cid, method s
 			out = t
 			return tx.Event(t.ID, "task.running", model.AssignmentPayload{AssignmentID: t.AssignmentID})
 		case "task_resume":
+			if a.ResumeRequestID != "" {
+				if a.PreviousAssignmentID != "" {
+					return model.Err("invalid_arguments", "provide resume_request_id or previous_assignment_id, not both")
+				}
+				if e = b.claimTaskResume(tx, &t, p, cid, a.ResumeRequestID); e != nil {
+					return e
+				}
+				out = t
+				return nil
+			}
+			if a.PreviousAssignmentID == "" {
+				return model.Err("invalid_arguments", "resume_request_id or previous_assignment_id is required")
+			}
+			if t.ResumeRequest != nil && t.ResumeRequest.State == "pending" {
+				return model.Err("resume_request_required", "claim the pending B resume request using resume_request_id")
+			}
 			if t.State != "interrupted" || a.PreviousAssignmentID != t.AssignmentID || t.AgentID != p.AgentID {
 				return model.Err("invalid_state", "matching interrupted assignment required")
 			}
@@ -636,24 +666,8 @@ func (b *Broker) CallAgent(ctx context.Context, p model.Principal, cid, method s
 			if slot == nil || slot.id != cid {
 				return model.Err("stale_assignment", "current agent connection required")
 			}
-			if !supportsWorkspace(b.clients[t.ExecutorID], t.WorkspaceID) {
-				return model.Err("executor_unavailable", "executor must reconnect for reconciliation")
-			}
-			cs, e := tx.Commands(t.ID)
-			if e != nil {
+			if e = b.checkResumeReady(tx, t); e != nil {
 				return e
-			}
-			for _, c := range cs {
-				if !c.Terminal() || c.State == "unknown" {
-					return model.Err("reconciliation_required", "command is running or its outcome is unknown")
-				}
-			}
-			w, e := tx.Workspace(t.WorkspaceID)
-			if e != nil {
-				return e
-			}
-			if w.Quarantined {
-				return model.Err("reconciliation_required", "workspace remains quarantined")
 			}
 			t.AssignmentID = uuid.NewString()
 			t.ConnectionID = cid
@@ -665,6 +679,9 @@ func (b *Broker) CallAgent(ctx context.Context, p model.Principal, cid, method s
 			}
 			out = t
 			return tx.Event(t.ID, "task.resumed", model.AssignmentPayload{AssignmentID: t.AssignmentID})
+		case "task_resume_failed":
+			out, e = b.reportTaskResumeFailure(tx, &t, p, cid, a)
+			return e
 		case "bash":
 			if e = b.authorized(t, p, cid, a.AssignmentID); e != nil {
 				return e
@@ -821,6 +838,9 @@ func (b *Broker) CallClient(ctx context.Context, c *ClientPeer, method string, r
 	a, e := parse(raw)
 	if e != nil {
 		return nil, e
+	}
+	if method == "tasks_resume" {
+		return b.requestTaskResume(ctx, c, a)
 	}
 	if method == "tasks_wait" {
 		if a.WaitMS == 0 {
@@ -1000,6 +1020,9 @@ func (b *Broker) submitTask(ctx context.Context, c *ClientPeer, a Args) (model.T
 }
 
 func (b *Broker) cancelTask(tx *storage.Tx, t *model.Task, reason string) error {
+	if err := tx.FailTaskResume(t, "task_cancelled", "the task was cancelled or its original deadline elapsed", "pending", "accepted"); err != nil {
+		return err
+	}
 	t.CancelReason = reason
 	if t.CancelReason == "" {
 		t.CancelReason = "requested"

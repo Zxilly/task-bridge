@@ -478,6 +478,9 @@ func (s *Store) ResetRestore(ctx context.Context) error {
 			if !v.Terminal() {
 				v.State = "interrupted"
 				v.LeaseUntil = 0
+				if e = tx.FailTaskResume(&v, "broker_restored", "the broker snapshot was restored; reconcile execution before requesting another attempt", "pending", "accepted"); e != nil {
+					return e
+				}
 				if e = tx.SaveTask(v); e != nil {
 					return e
 				}

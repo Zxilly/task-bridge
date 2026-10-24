@@ -113,6 +113,9 @@ func (b *Broker) reconcileExecutor(ctx context.Context, peer *ClientPeer, raw js
 			if !t.Terminal() {
 				t.State = "interrupted"
 				t.LeaseUntil = 0
+				if e = tx.FailTaskResume(&t, "reconciliation_required", "executor journal reconciliation requires review before another resume attempt", "pending", "accepted"); e != nil {
+					return e
+				}
 				if e = tx.SaveTask(t); e != nil {
 					return e
 				}

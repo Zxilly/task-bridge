@@ -54,28 +54,29 @@ type Workspace struct {
 	QuarantineReason string `json:"quarantine_reason,omitempty"`
 }
 type Task struct {
-	ID             string          `json:"task_id"`
-	RequesterID    string          `json:"requester_id"`
-	WorkspaceID    string          `json:"workspace_id"`
-	ExecutorID     string          `json:"executor_id"`
-	Prompt         string          `json:"prompt"`
-	State          string          `json:"state"`
-	IdempotencyKey string          `json:"idempotency_key"`
-	RequestHash    string          `json:"-"`
-	AssignmentID   string          `json:"assignment_id,omitempty"`
-	AgentID        string          `json:"agent_id,omitempty"`
-	ConnectionID   string          `json:"connection_id,omitempty"`
-	LeaseEpoch     int64           `json:"lease_epoch"`
-	LeaseUntil     int64           `json:"lease_until,omitempty"`
-	DeadlineAt     int64           `json:"deadline_at"`
-	CreatedAt      int64           `json:"created_at"`
-	UpdatedAt      int64           `json:"updated_at"`
-	Revision       int64           `json:"revision"`
-	Summary        string          `json:"summary,omitempty"`
-	Result         json.RawMessage `json:"result,omitempty"`
-	Progress       string          `json:"progress,omitempty"`
-	CancelReason   string          `json:"cancel_reason,omitempty"`
-	Unresolved     bool            `json:"unresolved,omitempty"`
+	ResumeRequest  *TaskResumeRequest `json:"resume_request,omitempty"`
+	ID             string             `json:"task_id"`
+	RequesterID    string             `json:"requester_id"`
+	WorkspaceID    string             `json:"workspace_id"`
+	ExecutorID     string             `json:"executor_id"`
+	Prompt         string             `json:"prompt"`
+	State          string             `json:"state"`
+	IdempotencyKey string             `json:"idempotency_key"`
+	RequestHash    string             `json:"-"`
+	AssignmentID   string             `json:"assignment_id,omitempty"`
+	AgentID        string             `json:"agent_id,omitempty"`
+	ConnectionID   string             `json:"connection_id,omitempty"`
+	LeaseEpoch     int64              `json:"lease_epoch"`
+	LeaseUntil     int64              `json:"lease_until,omitempty"`
+	DeadlineAt     int64              `json:"deadline_at"`
+	CreatedAt      int64              `json:"created_at"`
+	UpdatedAt      int64              `json:"updated_at"`
+	Revision       int64              `json:"revision"`
+	Summary        string             `json:"summary,omitempty"`
+	Result         json.RawMessage    `json:"result,omitempty"`
+	Progress       string             `json:"progress,omitempty"`
+	CancelReason   string             `json:"cancel_reason,omitempty"`
+	Unresolved     bool               `json:"unresolved,omitempty"`
 }
 
 func (t Task) Terminal() bool {

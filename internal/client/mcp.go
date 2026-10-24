@@ -14,6 +14,7 @@ import (
 
 type SubmitArgs = model.TaskSubmitArgs
 type RunArgs = model.TaskRunArgs
+type ResumeArgs = model.TaskResumeArgs
 type TaskArgs = model.TaskGetArgs
 type WaitArgs = model.TaskWaitArgs
 type CancelArgs = model.TaskCancelArgs
@@ -33,6 +34,7 @@ func (c *Client) MCPServer() *mcp.Server {
 	addClientResultBounds(server, implementation)
 	addClientTool(server, c, "Submit a durable task. Prompt must be English only (ASCII): printable ASCII plus TAB/LF/CR and at least one A-Z or a-z letter. Reuse idempotency_key when retrying the same task.", func(args SubmitArgs) error { return c.validateWorkspace(args.WorkspaceID) })
 	addClientTool(server, c, "Get durable task status and the final result.", func(TaskArgs) error { return nil })
+	addClientTool(server, c, "Request durable recovery of this same task's original Claude conversation on A. Reuse idempotency_key when retrying this recovery request; a different key is rejected while a request is pending. A pending or accepted receipt does not mean recovery succeeded or the task completed. Use tasks_get or tasks_wait for task status and the durable final result; unresolved execution still requires reconciliation.", func(ResumeArgs) error { return nil })
 	addClientTool(server, c, "Wait up to 60 seconds. Timeout or cancellation of this call does not cancel the task.", validateWait)
 	addClientTool(server, c, "Request cancellation; offline commands may still need stop confirmation.", func(CancelArgs) error { return nil })
 	addClientTool(server, c, "List tasks owned by this executor.", func(args ListArgs) error {

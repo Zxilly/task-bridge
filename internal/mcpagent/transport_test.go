@@ -60,10 +60,14 @@ func receiveChannelNotification(t *testing.T, conn *websocket.Conn, want model.C
 	if err = json.Unmarshal(params["meta"], &meta); err != nil {
 		t.Fatal(err)
 	}
-	if len(meta) != 3 {
+	expectedMeta := map[string]string{"task_id": want.Meta.TaskID, "assignment_id": want.Meta.AssignmentID, "workspace_id": want.Meta.WorkspaceID}
+	if want.Meta.ResumeRequestID != "" {
+		expectedMeta["resume_request_id"] = want.Meta.ResumeRequestID
+	}
+	if len(meta) != len(expectedMeta) {
 		t.Fatalf("channel metadata keys=%v", meta)
 	}
-	for key, expected := range map[string]string{"task_id": want.Meta.TaskID, "assignment_id": want.Meta.AssignmentID, "workspace_id": want.Meta.WorkspaceID} {
+	for key, expected := range expectedMeta {
 		var value *string
 		if err = json.Unmarshal(meta[key], &value); err != nil || value == nil {
 			t.Fatalf("channel meta.%s must be a JSON string, err=%v", key, err)
@@ -107,10 +111,13 @@ func channelTransportPair(t *testing.T) (*wsConnection, *websocket.Conn) {
 
 func TestChannelNotificationWireAndSerializedSize(t *testing.T) {
 	meta := model.ChannelMetadata{TaskID: "task-1", AssignmentID: "assignment-1", WorkspaceID: "workspace-1"}
+	resumeMeta := model.ChannelMetadata{TaskID: "task-1", WorkspaceID: "workspace-1", ResumeRequestID: "resume-1"}
 	// Calculate expected JSON sizes from the documented wire keys rather than
 	// marshaling the production type, which could conceal a struct-tag mistake.
 	const emptyWire = `{"content":"","meta":{"task_id":"task-1","assignment_id":"assignment-1","workspace_id":"workspace-1"}}`
 	capacity := model.MaxToolBytes - len(emptyWire)
+	const emptyResumeWire = `{"content":"","meta":{"task_id":"task-1","assignment_id":"","workspace_id":"workspace-1","resume_request_id":"resume-1"}}`
+	resumeContent := strings.Repeat("r", model.MaxToolBytes-len(emptyResumeWire))
 	ascii := strings.Repeat("x", capacity)
 	utf8Content := strings.Repeat("界", capacity/3) + strings.Repeat("x", capacity%3)
 	// NUL and each HTML character occupy six JSON bytes; quote, backslash, and
@@ -125,6 +132,9 @@ func TestChannelNotificationWireAndSerializedSize(t *testing.T) {
 		{name: "empty_content", message: model.ChannelNotification{Meta: meta}, wantError: "non-empty"},
 		{name: "empty_metadata", message: model.ChannelNotification{Content: "metadata strings may be empty"}},
 		{name: "unicode_and_escaping", message: model.ChannelNotification{Content: "任务🙂\n\"quoted\"\\path <>&", Meta: meta}},
+		{name: "resume_request_without_assignment", message: model.ChannelNotification{Content: "Explicit recovery of a queued task", Meta: resumeMeta}},
+		{name: "resume_request_exact_limit", message: model.ChannelNotification{Content: resumeContent, Meta: resumeMeta}, wantBytes: model.MaxToolBytes},
+		{name: "resume_request_one_byte_over", message: model.ChannelNotification{Content: resumeContent + "r", Meta: resumeMeta}, wantError: "exceeds limit"},
 		{name: "ascii_exact_limit", message: model.ChannelNotification{Content: ascii, Meta: meta}, wantBytes: model.MaxToolBytes},
 		{name: "ascii_one_byte_over", message: model.ChannelNotification{Content: ascii + "x", Meta: meta}, wantError: "exceeds limit"},
 		{name: "utf8_exact_limit", message: model.ChannelNotification{Content: utf8Content, Meta: meta}, wantBytes: model.MaxToolBytes},
