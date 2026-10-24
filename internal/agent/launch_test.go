@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -24,6 +25,7 @@ type launchReport struct {
 	Args        []string
 	Directory   string
 	Prompt      string
+	MCPConfig   json.RawMessage
 	Environment map[string]string
 }
 
@@ -52,9 +54,15 @@ func runLaunchTestHelper() error {
 			return err
 		}
 		report := launchReport{Args: os.Args[1:], Directory: directory, Prompt: string(prompt), Environment: make(map[string]string)}
-		for _, key := range []string{"BRIDGE_OLD_TOKEN", "bridge_old_lower", "CUSTOM_AGENT_CREDENTIAL", TaskTokenEnv, "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_DISABLE_AUTO_MEMORY"} {
+		for _, key := range []string{"BRIDGE_OLD_TOKEN", "bridge_old_lower", "CUSTOM_AGENT_CREDENTIAL", TaskTokenEnv, "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CONFIG_DIR", "CLAUDE_CODE_DISABLE_AUTO_MEMORY", "CLAUDE_CODE_SKIP_PROMPT_HISTORY", "CLAUDE_CODE_RESUME_INTERRUPTED_TURN"} {
 			if value, ok := os.LookupEnv(key); ok {
 				report.Environment[key] = value
+			}
+		}
+		if index := slices.Index(report.Args, "--mcp-config"); index >= 0 && index+1 < len(report.Args) {
+			report.MCPConfig, err = os.ReadFile(report.Args[index+1])
+			if err != nil {
+				return err
 			}
 		}
 		data, err := json.Marshal(report)
@@ -62,6 +70,21 @@ func runLaunchTestHelper() error {
 			return err
 		}
 		return os.WriteFile(os.Getenv("TASK_BRIDGE_LAUNCH_TEST_REPORT"), data, 0600)
+	case "resume-missing":
+		record, err := os.OpenFile(os.Getenv("TASK_BRIDGE_LAUNCH_TEST_REPORT"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		if err != nil {
+			return err
+		}
+		err = json.NewEncoder(record).Encode(os.Args[1:])
+		closeErr := record.Close()
+		if err != nil {
+			return err
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		fmt.Fprintln(os.Stderr, "No conversation found with session ID:", os.Args[3])
+		os.Exit(18)
 	case "fail":
 		fmt.Fprintln(os.Stderr, "controlled CLI failure", os.Getenv(TaskTokenEnv))
 		fmt.Fprint(os.Stderr, strings.Repeat("x", 64<<10))
@@ -120,6 +143,9 @@ func TestCommandLauncherIsolatesArgumentsEnvironmentAndDirectory(t *testing.T) {
 	t.Setenv("CUSTOM_AGENT_CREDENTIAL", "old-custom-broker-token")
 	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "existing-claude-login")
 	t.Setenv("CLAUDE_CODE_DISABLE_AUTO_MEMORY", "0")
+	t.Setenv("CLAUDE_CODE_SKIP_PROMPT_HISTORY", "1")
+	t.Setenv("CLAUDE_CODE_RESUME_INTERRUPTED_TURN", "1")
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(t.TempDir(), "existing-claude-config"))
 	var previous Session
 	for range 2 {
 		session := launcherSession(t)
@@ -135,10 +161,10 @@ func TestCommandLauncherIsolatesArgumentsEnvironmentAndDirectory(t *testing.T) {
 			t.Fatal(err)
 		}
 		wantArgs := []string{
-			"--print", "--session-id", session.ID, "--no-session-persistence",
+			"--print", "--session-id", session.ID,
 			"--tools", "", "--allowedTools", "mcp__bridge__*",
 			"--strict-mcp-config", "--mcp-config", session.MCPConfig,
-			"--settings", `{"autoMemoryEnabled":false,"disableAllHooks":true}`,
+			"--settings", `{"autoMemoryEnabled":false,"disableAllHooks":true,"env":{"CLAUDE_CODE_SKIP_PROMPT_HISTORY":"0","CLAUDE_CODE_RESUME_INTERRUPTED_TURN":"0"}}`,
 			"--setting-sources", "user", "--disable-slash-commands",
 			"--permission-prompts", "none", "--output-format", "json", "--model", "test-model",
 		}
@@ -159,10 +185,99 @@ func TestCommandLauncherIsolatesArgumentsEnvironmentAndDirectory(t *testing.T) {
 		if report.Environment["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] != "1" {
 			t.Fatal("inherited environment enabled shared auto memory")
 		}
+		if _, ok := report.Environment["CLAUDE_CODE_SKIP_PROMPT_HISTORY"]; ok {
+			t.Fatal("inherited environment disabled transcript persistence")
+		}
+		if report.Environment["CLAUDE_CODE_RESUME_INTERRUPTED_TURN"] != "0" {
+			t.Fatal("inherited environment enabled automatic interrupted-turn continuation")
+		}
+		if report.Environment["CLAUDE_CONFIG_DIR"] != os.Getenv("CLAUDE_CONFIG_DIR") {
+			t.Fatal("existing Claude configuration and login location changed")
+		}
 		if previous.ID == session.ID || previous.Directory == session.Directory {
 			t.Fatal("two tasks shared a session ID or working directory")
 		}
 		previous = session
+	}
+}
+
+func TestCommandLauncherResumesSameSessionWithCurrentRelay(t *testing.T) {
+	launcher, reportPath := launcherHelper(t, "record")
+	session := launcherSession(t)
+	if err := launcher.Launch(t.Context(), session); err != nil {
+		t.Fatal(err)
+	}
+	var first launchReport
+	data, err := os.ReadFile(reportPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &first); err != nil {
+		t.Fatal(err)
+	}
+
+	session.Resume = true
+	session.MCPConfig = filepath.Join(session.Directory, "resumed relay.json")
+	session.Prompt = "Resume this task using the current assignment; inspect known command results before executing."
+	session.Token = "resumed-task-token-" + uuid.NewString()
+	config := `{"mcpServers":{"bridge":{"type":"http","url":"http://127.0.0.1:43210/current-run","headers":{"Authorization":"Bearer ${BRIDGE_TASK_TOKEN}"}}}}`
+	if err := os.WriteFile(session.MCPConfig, []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := launcher.Launch(t.Context(), session); err != nil {
+		t.Fatal(err)
+	}
+	var resumed launchReport
+	data, err = os.ReadFile(reportPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &resumed); err != nil {
+		t.Fatal(err)
+	}
+	if len(resumed.Args) < 3 || !reflect.DeepEqual(resumed.Args[:3], []string{"--print", "--resume", session.ID}) || first.Args[2] != session.ID {
+		t.Fatalf("resume did not select the original session: first=%q resumed=%q", first.Args, resumed.Args)
+	}
+	for _, forbidden := range []string{"--session-id", "--continue", "--fork-session", "--no-session-persistence"} {
+		if slices.Contains(resumed.Args, forbidden) {
+			t.Fatalf("resume included conflicting or nonpersistent flag %s", forbidden)
+		}
+	}
+	if resumed.Directory != first.Directory || resumed.Directory != session.Directory {
+		t.Fatalf("resume changed task cwd: first=%q resumed=%q", first.Directory, resumed.Directory)
+	}
+	if resumed.Prompt != session.Prompt || resumed.Environment[TaskTokenEnv] != session.Token || resumed.Environment[TaskTokenEnv] == first.Environment[TaskTokenEnv] {
+		t.Fatal("resume reused an old task prompt or relay credential")
+	}
+	if string(resumed.MCPConfig) != config || reflect.DeepEqual(resumed.MCPConfig, first.MCPConfig) {
+		t.Fatal("resume did not read the current invocation's MCP configuration")
+	}
+}
+
+func TestCommandLauncherMissingResumeDoesNotStartFreshSession(t *testing.T) {
+	launcher, reportPath := launcherHelper(t, "resume-missing")
+	session := launcherSession(t)
+	session.Resume = true
+	err := launcher.Launch(t.Context(), session)
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 18 || !strings.Contains(err.Error(), "No conversation found with session ID: "+session.ID) {
+		t.Fatalf("missing session error was not preserved: %v", err)
+	}
+	record, err := os.Open(reportPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer record.Close()
+	decoder := json.NewDecoder(record)
+	var args []string
+	if err := decoder.Decode(&args); err != nil {
+		t.Fatal(err)
+	}
+	if len(args) < 3 || !reflect.DeepEqual(args[:3], []string{"--print", "--resume", session.ID}) {
+		t.Fatalf("failed invocation did not select original session: %q", args)
+	}
+	if err := decoder.Decode(new([]string)); !errors.Is(err, io.EOF) {
+		t.Fatalf("launcher retried after missing resume: %v", err)
 	}
 }
 

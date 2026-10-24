@@ -52,3 +52,11 @@ func TestDoctorDoesNotLaunchClaudeOrCreateState(t *testing.T) {
 		t.Fatalf("doctor created state directory: %v", err)
 	}
 }
+
+func TestResumeRequiresAnExplicitTaskID(t *testing.T) {
+	cmd := command()
+	cmd.SetArgs([]string{"resume"})
+	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "task-id") {
+		t.Fatalf("resume without a task ID was not rejected: %v", err)
+	}
+}

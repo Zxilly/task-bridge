@@ -35,7 +35,7 @@ func command() *cobra.Command {
 	root := &cobra.Command{Use: "task-bridge-agent", Short: "Run each bridge task in a fresh Claude Code session", Version: model.Version, Args: cobra.NoArgs, SilenceUsage: true, SilenceErrors: true}
 	var configPath string
 	root.PersistentFlags().StringVar(&configPath, "config", "agent.json", "Agent JSON configuration path")
-	run := func(cmd *cobra.Command, _ []string) error {
+	executeWorker := func(cmd *cobra.Command, taskID string) error {
 		cfg, err := agent.LoadConfig(configPath)
 		if err != nil {
 			return err
@@ -47,13 +47,29 @@ func command() *cobra.Command {
 		}
 		ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		if err = worker.Run(ctx); errors.Is(err, context.Canceled) {
+		if taskID == "" {
+			err = worker.Run(ctx)
+		} else {
+			err = worker.Resume(ctx, taskID)
+		}
+		if errors.Is(err, context.Canceled) {
 			return nil
 		}
 		return err
 	}
+	run := func(cmd *cobra.Command, _ []string) error { return executeWorker(cmd, "") }
 	root.RunE = run
 	root.AddCommand(&cobra.Command{Use: "run", Short: "Connect to the broker and launch one Claude process per task", Args: cobra.NoArgs, RunE: run})
+	var resumeTaskID string
+	resume := &cobra.Command{Use: "resume", Short: "Resume one task's saved Claude conversation after checking broker recovery", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		if resumeTaskID == "" {
+			return errors.New("--task-id is required for resume")
+		}
+		return executeWorker(cmd, resumeTaskID)
+	}}
+	resume.Flags().StringVar(&resumeTaskID, "task-id", "", "Task ID whose original Claude session should resume")
+	_ = resume.MarkFlagRequired("task-id")
+	root.AddCommand(resume)
 	root.AddCommand(&cobra.Command{Use: "doctor", Short: "Validate local configuration without starting Claude or connecting", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		cfg, err := agent.LoadConfig(configPath)
 		if err != nil {

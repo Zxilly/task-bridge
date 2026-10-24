@@ -14,11 +14,12 @@ import (
 	"github.com/google/uuid"
 )
 
-// Session describes one isolated Claude invocation. The worker assigns a new
-// UUID and working directory for each task, and owns their cleanup.
+// Session describes one Claude invocation. A task keeps its UUID and working
+// directory when resumed, while each invocation receives a new relay credential.
 type Session struct {
 	ID, Directory, MCPConfig, Prompt, Token string
 	Task                                    model.ChannelMetadata
+	Resume                                  bool
 }
 
 type Launcher interface {
@@ -48,11 +49,15 @@ func (l CommandLauncher) Launch(ctx context.Context, session Session) error {
 	if path == "" {
 		path = "claude"
 	}
+	sessionFlag := "--session-id"
+	if session.Resume {
+		sessionFlag = "--resume"
+	}
 	args := []string{
-		"--print", "--session-id", session.ID, "--no-session-persistence",
+		"--print", sessionFlag, session.ID,
 		"--tools", "", "--allowedTools", "mcp__bridge__*",
 		"--strict-mcp-config", "--mcp-config", session.MCPConfig,
-		"--settings", `{"autoMemoryEnabled":false,"disableAllHooks":true}`,
+		"--settings", `{"autoMemoryEnabled":false,"disableAllHooks":true,"env":{"CLAUDE_CODE_SKIP_PROMPT_HISTORY":"0","CLAUDE_CODE_RESUME_INTERRUPTED_TURN":"0"}}`,
 		"--setting-sources", "user", "--disable-slash-commands",
 		"--permission-prompts", "none", "--output-format", "json",
 	}
@@ -66,7 +71,7 @@ func (l CommandLauncher) Launch(ctx context.Context, session Session) error {
 	output := &launchDiagnostic{}
 	cmd.Stdout, cmd.Stderr = output, output
 	cmd.WaitDelay = 3 * time.Second
-	process, err := processcontrol.Prepare(cmd)
+	process, err := processcontrol.PrepareForParentExit(cmd)
 	if err != nil {
 		return fmt.Errorf("prepare Claude process: %w", err)
 	}
@@ -111,12 +116,14 @@ func (l CommandLauncher) environment(token string) []string {
 		key, _, _ := strings.Cut(entry, "=")
 		if strings.HasPrefix(strings.ToUpper(key), "BRIDGE_") ||
 			strings.EqualFold(key, "CLAUDE_CODE_DISABLE_AUTO_MEMORY") ||
+			strings.EqualFold(key, "CLAUDE_CODE_SKIP_PROMPT_HISTORY") ||
+			strings.EqualFold(key, "CLAUDE_CODE_RESUME_INTERRUPTED_TURN") ||
 			(l.TokenEnv != "" && strings.EqualFold(key, l.TokenEnv)) {
 			continue
 		}
 		env = append(env, entry)
 	}
-	return append(env, TaskTokenEnv+"="+token, "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1")
+	return append(env, TaskTokenEnv+"="+token, "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1", "CLAUDE_CODE_RESUME_INTERRUPTED_TURN=0")
 }
 
 // launchDiagnostic drains both streams while retaining bounded failure detail.
