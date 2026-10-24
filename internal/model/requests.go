@@ -8,14 +8,14 @@ type ClientRequest interface {
 
 type TaskSubmitArgs struct {
 	WorkspaceID    string `json:"workspace_id" jsonschema:"Configured local workspace identifier"`
-	Prompt         string `json:"prompt" jsonschema:"Task for the remote Claude Code session"`
+	Prompt         string `json:"prompt" jsonschema:"English only (ASCII). Use printable ASCII plus TAB, LF or CR and include at least one A-Z or a-z letter."`
 	IdempotencyKey string `json:"idempotency_key" jsonschema:"Stable key reused if submission times out or disconnects"`
 	DeadlineMS     int64  `json:"deadline_ms,omitempty"`
 }
 
 type TaskRunArgs struct {
 	WorkspaceID    string `json:"workspace_id"`
-	Prompt         string `json:"prompt"`
+	Prompt         string `json:"prompt" jsonschema:"English only (ASCII). Use printable ASCII plus TAB, LF or CR and include at least one A-Z or a-z letter."`
 	IdempotencyKey string `json:"idempotency_key"`
 	DeadlineMS     int64  `json:"deadline_ms,omitempty"`
 	WaitMS         int64  `json:"wait_ms,omitempty"`

@@ -31,7 +31,7 @@ func (c *Client) MCPServer() *mcp.Server {
 	implementation := &mcp.Implementation{Name: "task-bridge-client", Version: model.Version}
 	server := mcp.NewServer(implementation, nil)
 	addClientResultBounds(server, implementation)
-	addClientTool(server, c, "Submit a durable task. Reuse idempotency_key when retrying the same task.", func(args SubmitArgs) error { return c.validateWorkspace(args.WorkspaceID) })
+	addClientTool(server, c, "Submit a durable task. Prompt must be English only (ASCII): printable ASCII plus TAB/LF/CR and at least one A-Z or a-z letter. Reuse idempotency_key when retrying the same task.", func(args SubmitArgs) error { return c.validateWorkspace(args.WorkspaceID) })
 	addClientTool(server, c, "Get durable task status and the final result.", func(TaskArgs) error { return nil })
 	addClientTool(server, c, "Wait up to 60 seconds. Timeout or cancellation of this call does not cancel the task.", validateWait)
 	addClientTool(server, c, "Request cancellation; offline commands may still need stop confirmation.", func(CancelArgs) error { return nil })
@@ -42,7 +42,7 @@ func (c *Client) MCPServer() *mcp.Server {
 		return nil
 	})
 	addClientTool(server, c, "Read durable progress events after a cursor.", func(EventsArgs) error { return nil })
-	mcp.AddTool(server, &mcp.Tool{Name: "tasks_run", Description: "Submit and wait for a task. Returns task_id even when the bounded wait expires; query that task instead of creating another."}, func(ctx context.Context, req *mcp.CallToolRequest, args RunArgs) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "tasks_run", Description: "Submit and wait for a task. Prompt must be English only (ASCII): printable ASCII plus TAB/LF/CR and at least one A-Z or a-z letter. Returns task_id even when the bounded wait expires; query that task instead of creating another."}, func(ctx context.Context, req *mcp.CallToolRequest, args RunArgs) (*mcp.CallToolResult, any, error) {
 		ctx, cancel := context.WithTimeout(ctx, 80*time.Second)
 		defer cancel()
 		if err := c.validateWorkspace(args.WorkspaceID); err != nil {

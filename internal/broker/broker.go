@@ -974,6 +974,11 @@ func (b *Broker) submitTask(ctx context.Context, c *ClientPeer, a Args) (model.T
 		if !errors.Is(e, sql.ErrNoRows) {
 			return e
 		}
+		// Existing matching submissions retain their original prompt contract.
+		// Enforce English only when this request would create a new task.
+		if e = model.ValidateEnglishTaskPrompt(a.Prompt); e != nil {
+			return e
+		}
 		if e = b.Store.AdmissionIn(tx); e != nil {
 			return e
 		}
