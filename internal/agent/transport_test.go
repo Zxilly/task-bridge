@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/Zxilly/task-bridge/internal/model"
@@ -66,10 +67,36 @@ func TestChannelTransportRejectsCallsAndMalformedRouting(t *testing.T) {
 		{ID: id, Method: "notifications/claude/channel", Params: json.RawMessage(`{}`)},
 		{Method: "notifications/claude/channel", Params: json.RawMessage(`{"content":"text","meta":{}}`)},
 		{Method: "notifications/claude/channel", Params: json.RawMessage(`null`)},
+		{Method: "notifications/claude/channel", Params: model.JSON(model.ChannelNotification{Content: "text", Meta: model.ChannelMetadata{TaskID: "task", WorkspaceID: "workspace"}})},
+		{Method: "notifications/claude/channel", Params: model.JSON(model.ChannelNotification{Content: "text", Meta: model.ChannelMetadata{TaskID: "task", WorkspaceID: "workspace", ResumeRequestID: strings.Repeat("r", 129)}})},
 	} {
 		connection := &channelConnection{Connection: &messageConnection{messages: []jsonrpc.Message{request}}, queue: newOfferQueue()}
 		if _, err := connection.Read(context.Background()); err == nil {
 			t.Fatal("invalid channel frame accepted")
 		}
+	}
+}
+
+func TestChannelResumeNoticeQueuesAfterInterruptedNotice(t *testing.T) {
+	q := newOfferQueue()
+	previous := model.ChannelNotification{Content: "interrupted", Meta: model.ChannelMetadata{TaskID: "task", AssignmentID: "old-assignment", WorkspaceID: "workspace"}}
+	q.push(previous)
+	q.start(<-q.ready)
+	q.finish(previous)
+	resume := model.ChannelNotification{Content: "resume", Meta: model.ChannelMetadata{TaskID: "task", WorkspaceID: "workspace", ResumeRequestID: "request"}}
+	marker := &jsonrpc.Response{Result: json.RawMessage(`{}`)}
+	connection := &channelConnection{Connection: &messageConnection{messages: []jsonrpc.Message{
+		&jsonrpc.Request{Method: "notifications/claude/channel", Params: model.JSON(resume)},
+		&jsonrpc.Request{Method: "notifications/claude/channel", Params: model.JSON(resume)},
+		marker,
+	}}, queue: q}
+	if got, err := connection.Read(context.Background()); err != nil || got != marker {
+		t.Fatalf("resume notice blocked reply: %v %v", got, err)
+	}
+	if len(q.ready) != 1 {
+		t.Fatalf("queued resume notices=%d", len(q.ready))
+	}
+	if got := <-q.ready; got != resume {
+		t.Fatalf("resume routing changed: %+v", got)
 	}
 }

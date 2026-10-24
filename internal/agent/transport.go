@@ -19,8 +19,10 @@ type offerQueue struct {
 	active, queued, completed string
 }
 
-func newOfferQueue() *offerQueue                  { return &offerQueue{ready: make(chan model.ChannelNotification, 1)} }
-func offerKey(n model.ChannelNotification) string { return n.Meta.TaskID + "/" + n.Meta.AssignmentID }
+func newOfferQueue() *offerQueue { return &offerQueue{ready: make(chan model.ChannelNotification, 1)} }
+func offerKey(n model.ChannelNotification) string {
+	return n.Meta.TaskID + "/" + n.Meta.AssignmentID + "/" + n.Meta.ResumeRequestID
+}
 func (q *offerQueue) push(n model.ChannelNotification) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -75,10 +77,10 @@ func (c *channelConnection) Read(ctx context.Context) (jsonrpc.Message, error) {
 			return nil, errors.New("channel event must be a notification")
 		}
 		var offer model.ChannelNotification
-		if len(request.Params) > model.MaxToolBytes || json.Unmarshal(request.Params, &offer) != nil || offer.Content == "" || offer.Meta.TaskID == "" || offer.Meta.AssignmentID == "" || offer.Meta.WorkspaceID == "" {
+		if len(request.Params) > model.MaxToolBytes || json.Unmarshal(request.Params, &offer) != nil || offer.Content == "" || offer.Meta.TaskID == "" || offer.Meta.WorkspaceID == "" || (offer.Meta.AssignmentID == "" && offer.Meta.ResumeRequestID == "") {
 			return nil, errors.New("invalid task channel notification")
 		}
-		if len(offer.Meta.TaskID) > 128 || len(offer.Meta.AssignmentID) > 128 || len(offer.Meta.WorkspaceID) > 128 {
+		if len(offer.Meta.TaskID) > 128 || len(offer.Meta.AssignmentID) > 128 || len(offer.Meta.WorkspaceID) > 128 || len(offer.Meta.ResumeRequestID) > 128 {
 			return nil, errors.New("invalid task channel identity")
 		}
 		c.queue.push(offer)

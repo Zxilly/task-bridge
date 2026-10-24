@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -215,10 +216,12 @@ func TestWorkerStartsIsolatedSessionsAndWaitsForPreviousChild(t *testing.T) {
 	stop()
 }
 
-func TestWorkerDisconnectsWhenChildExitsWithoutCompletion(t *testing.T) {
+func TestWorkerRemainsOnlineAfterChildExitsWithoutCompletion(t *testing.T) {
 	f := setupWorker(t)
 	task := f.submit(t, "crash", "do not silently retry")
+	var launches atomic.Int32
 	f.worker.launcher = launcherFunc(func(ctx context.Context, session Session) error {
+		launches.Add(1)
 		client, err := taskClient(ctx, session)
 		if err != nil {
 			return err
@@ -236,23 +239,14 @@ func TestWorkerDisconnectsWhenChildExitsWithoutCompletion(t *testing.T) {
 		}
 		return errors.New("controlled child failure")
 	})
-	if err := f.worker.Run(f.ctx); err == nil || !strings.Contains(err.Error(), "controlled child failure") {
-		t.Fatalf("missing failure: %v", err)
-	}
-	for {
-		var state string
-		err := f.broker.Store.View(f.ctx, func(tx *storage.Tx) error { task, err := tx.Task(task.ID); state = task.State; return err })
-		if err != nil {
-			t.Fatal(err)
-		}
-		if state == "interrupted" {
-			break
-		}
-		select {
-		case <-f.ctx.Done():
-			t.Fatalf("task never interrupted: %s", state)
-		case <-time.After(10 * time.Millisecond):
-		}
+	run := startFixtureController(t, f)
+	waitWorkerTask(t, f, task.ID, "interrupted")
+	// Include the first reconnect: an ordinary interrupted notice must not
+	// automatically start the saved conversation without a B MCP request.
+	time.Sleep(1500 * time.Millisecond)
+	run.requireAlive(t)
+	if launches.Load() != 1 {
+		t.Fatal("interrupted task was automatically retried")
 	}
 }
 
@@ -279,26 +273,12 @@ func TestWorkerStopsChildWhenAssignmentChanges(t *testing.T) {
 		childExited <- struct{}{}
 		return ctx.Err()
 	})
-	ctx, cancel := context.WithCancel(f.ctx)
-	finished := make(chan struct{})
-	var workerErr error
-	go func() {
-		workerErr = f.worker.Run(ctx)
-		close(finished)
-	}()
-	t.Cleanup(func() {
-		cancel()
-		select {
-		case <-finished:
-		case <-time.After(5 * time.Second):
-			t.Error("worker cleanup did not finish")
-		}
-	})
+	run := startFixtureController(t, f)
 	var original Session
 	select {
 	case original = <-sessions:
-	case <-finished:
-		t.Fatalf("worker stopped before starting the old session: %v", workerErr)
+	case <-run.finished:
+		t.Fatalf("worker stopped before starting the old session: %v", run.err)
 	case <-f.ctx.Done():
 		t.Fatal(f.ctx.Err())
 	}
@@ -307,28 +287,22 @@ func TestWorkerStopsChildWhenAssignmentChanges(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if current.AssignmentID != original.Task.AssignmentID || current.State != "offered" {
-			return errors.New("task did not retain its original offer")
+		if current.AssignmentID != original.Task.AssignmentID || current.State != "running" {
+			return errors.New("task did not retain its accepted assignment")
 		}
-		// Simulate the broker reoffering after its unaccepted lease expires.
+		// Simulate revocation and replacement of the current assignment.
 		current.AssignmentID = uuid.NewString()
 		return tx.SaveTask(current)
 	}); err != nil {
 		t.Fatal(err)
 	}
 	select {
-	case <-finished:
-		if workerErr == nil || !strings.Contains(workerErr.Error(), "assignment changed") {
-			t.Fatalf("missing assignment-change failure: %v", workerErr)
-		}
+	case <-childExited:
 	case <-time.After(3 * time.Second):
 		t.Fatal("old child survived the changed task assignment")
 	}
-	select {
-	case <-childExited:
-	default:
-		t.Fatal("worker returned without waiting for the old child to exit")
-	}
+	waitWorkerTask(t, f, task.ID, "interrupted")
+	run.requireAlive(t)
 	select {
 	case <-sessions:
 		t.Fatal("worker started a new session after losing its assignment")

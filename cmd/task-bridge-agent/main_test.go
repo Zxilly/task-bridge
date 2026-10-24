@@ -53,10 +53,17 @@ func TestDoctorDoesNotLaunchClaudeOrCreateState(t *testing.T) {
 	}
 }
 
-func TestResumeRequiresAnExplicitTaskID(t *testing.T) {
+func TestOnlyOperationalCommandsAreExposed(t *testing.T) {
 	cmd := command()
+	commands := make(map[string]bool)
+	for _, child := range cmd.Commands() {
+		commands[child.Name()] = true
+	}
+	if commands["resume"] || !commands["run"] || !commands["doctor"] {
+		t.Fatalf("unexpected agent operations: %v", commands)
+	}
 	cmd.SetArgs([]string{"resume"})
-	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "task-id") {
-		t.Fatalf("resume without a task ID was not rejected: %v", err)
+	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "unknown command") {
+		t.Fatalf("CLI still accepted the MCP-only resume operation: %v", err)
 	}
 }
