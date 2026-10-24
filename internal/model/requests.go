@@ -11,6 +11,8 @@ type TaskSubmitArgs struct {
 	Prompt         string `json:"prompt" jsonschema:"English only (ASCII). Use printable ASCII plus TAB, LF or CR and include at least one A-Z or a-z letter."`
 	IdempotencyKey string `json:"idempotency_key" jsonschema:"Stable key reused if submission times out or disconnects"`
 	DeadlineMS     int64  `json:"deadline_ms,omitempty"`
+	Model          string `json:"model,omitempty" jsonschema:"Claude model alias or full model ID for this task; overrides the agent default when set"`
+	Effort         string `json:"effort,omitempty" jsonschema:"Claude reasoning effort for this task: low, medium, high, xhigh, or max. Omit to use Claude defaults. Supported levels depend on the model and Claude version."`
 }
 
 type TaskRunArgs struct {
@@ -19,6 +21,8 @@ type TaskRunArgs struct {
 	IdempotencyKey string `json:"idempotency_key"`
 	DeadlineMS     int64  `json:"deadline_ms,omitempty"`
 	WaitMS         int64  `json:"wait_ms,omitempty"`
+	Model          string `json:"model,omitempty" jsonschema:"Claude model alias or full model ID for this task; overrides the agent default when set"`
+	Effort         string `json:"effort,omitempty" jsonschema:"Claude reasoning effort for this task: low, medium, high, xhigh, or max. Omit to use Claude defaults. Supported levels depend on the model and Claude version."`
 }
 
 type TaskGetArgs struct {

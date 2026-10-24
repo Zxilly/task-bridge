@@ -20,6 +20,7 @@ type Session struct {
 	ID, Directory, MCPConfig, Prompt, Token string
 	Task                                    model.ChannelMetadata
 	Resume                                  bool
+	Model, Effort                           string
 }
 
 type Launcher interface {
@@ -45,6 +46,9 @@ func (l CommandLauncher) Launch(ctx context.Context, session Session) error {
 	if session.Directory == "" || session.MCPConfig == "" || session.Prompt == "" || session.Token == "" {
 		return fmt.Errorf("Claude session directory, MCP config, prompt and task token are required")
 	}
+	if err := model.ValidateTaskOptions(session.Model, session.Effort); err != nil {
+		return err
+	}
 	path := l.Path
 	if path == "" {
 		path = "claude"
@@ -61,12 +65,19 @@ func (l CommandLauncher) Launch(ctx context.Context, session Session) error {
 		"--setting-sources", "user", "--disable-slash-commands",
 		"--permission-prompts", "none", "--output-format", "json",
 	}
-	if l.Model != "" {
-		args = append(args, "--model", l.Model)
+	modelName := session.Model
+	if modelName == "" {
+		modelName = l.Model
+	}
+	if modelName != "" {
+		args = append(args, "--model", modelName)
+	}
+	if session.Effort != "" {
+		args = append(args, "--effort", session.Effort)
 	}
 	cmd := exec.Command(path, args...)
 	cmd.Dir = session.Directory
-	cmd.Env = l.environment(session.Token)
+	cmd.Env = l.environment(session.Token, session.Effort)
 	cmd.Stdin = strings.NewReader(session.Prompt)
 	output := &launchDiagnostic{}
 	cmd.Stdout, cmd.Stderr = output, output
@@ -110,7 +121,7 @@ func (l CommandLauncher) Launch(ctx context.Context, session Session) error {
 	return nil
 }
 
-func (l CommandLauncher) environment(token string) []string {
+func (l CommandLauncher) environment(token, effort string) []string {
 	env := make([]string, 0, len(os.Environ())+1)
 	for _, entry := range os.Environ() {
 		key, _, _ := strings.Cut(entry, "=")
@@ -118,10 +129,16 @@ func (l CommandLauncher) environment(token string) []string {
 			strings.EqualFold(key, "CLAUDE_CODE_DISABLE_AUTO_MEMORY") ||
 			strings.EqualFold(key, "CLAUDE_CODE_SKIP_PROMPT_HISTORY") ||
 			strings.EqualFold(key, "CLAUDE_CODE_RESUME_INTERRUPTED_TURN") ||
+			(effort != "" && strings.EqualFold(key, "CLAUDE_CODE_EFFORT_LEVEL")) ||
 			(l.TokenEnv != "" && strings.EqualFold(key, l.TokenEnv)) {
 			continue
 		}
 		env = append(env, entry)
+	}
+	if effort != "" {
+		// The environment override can take precedence over --effort. Replace
+		// an inherited value so a task's explicit choice always reaches Claude.
+		env = append(env, "CLAUDE_CODE_EFFORT_LEVEL="+effort)
 	}
 	return append(env, TaskTokenEnv+"="+token, "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1", "CLAUDE_CODE_RESUME_INTERRUPTED_TURN=0")
 }

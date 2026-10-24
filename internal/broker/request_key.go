@@ -22,8 +22,15 @@ type taskRequestKey struct {
 	WorkspaceID string
 	Prompt      string
 	DeadlineMS  int64
+	Model       string
+	Effort      string
 }
 
 func (k taskRequestKey) MarshalJSON() ([]byte, error) {
-	return json.Marshal([3]json.RawMessage{model.JSON(k.WorkspaceID), model.JSON(k.Prompt), model.JSON(k.DeadlineMS)})
+	parts := []json.RawMessage{model.JSON(k.WorkspaceID), model.JSON(k.Prompt), model.JSON(k.DeadlineMS)}
+	// Retain the persisted three-element key when no overrides were supplied.
+	if k.Model != "" || k.Effort != "" {
+		parts = append(parts, model.JSON(k.Model), model.JSON(k.Effort))
+	}
+	return json.Marshal(parts)
 }

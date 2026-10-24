@@ -60,6 +60,8 @@ type Task struct {
 	WorkspaceID    string             `json:"workspace_id"`
 	ExecutorID     string             `json:"executor_id"`
 	Prompt         string             `json:"prompt"`
+	Model          string             `json:"model,omitempty"`
+	Effort         string             `json:"effort,omitempty"`
 	State          string             `json:"state"`
 	IdempotencyKey string             `json:"idempotency_key"`
 	RequestHash    string             `json:"-"`

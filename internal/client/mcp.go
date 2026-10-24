@@ -54,7 +54,7 @@ func (c *Client) MCPServer() *mcp.Server {
 			return clientToolResult(nil, err, ""), nil, nil
 		}
 		defer clientCallProgress(ctx, req)()
-		response, err := c.RPC(ctx, SubmitArgs{WorkspaceID: args.WorkspaceID, Prompt: args.Prompt, IdempotencyKey: args.IdempotencyKey, DeadlineMS: args.DeadlineMS})
+		response, err := c.RPC(ctx, SubmitArgs{WorkspaceID: args.WorkspaceID, Prompt: args.Prompt, IdempotencyKey: args.IdempotencyKey, DeadlineMS: args.DeadlineMS, Model: args.Model, Effort: args.Effort})
 		if err != nil {
 			return clientToolResult(nil, err, ""), nil, nil
 		}

@@ -308,8 +308,11 @@ func TestWorkerMCPResumeUsesSameOnlineRunAndOriginalConversation(t *testing.T) {
 		})
 		return err
 	})
-	task := workerMCPTool[model.Task](t, f, "tasks_submit", model.TaskSubmitArgs{WorkspaceID: "workspace", Prompt: "Keep this original task conversation for explicit recovery.", IdempotencyKey: "original-task", DeadlineMS: 45000})
+	task := workerMCPTool[model.Task](t, f, "tasks_submit", model.TaskSubmitArgs{WorkspaceID: "workspace", Prompt: "Keep this original task conversation for explicit recovery.", IdempotencyKey: "original-task", DeadlineMS: 45000, Model: "opus", Effort: "high"})
 	original := f.nextSession(t, sessions)
+	if original.Model != "opus" || original.Effort != "high" {
+		t.Fatalf("initial task lost its model or effort: %+v", original)
+	}
 	f.waitTask(t, task.ID, "initial interruption", func(task model.Task) bool { return task.State == "interrupted" })
 	f.waitConnected(t)
 	f.noSession(t, sessions)
@@ -323,6 +326,9 @@ func TestWorkerMCPResumeUsesSameOnlineRunAndOriginalConversation(t *testing.T) {
 		t.Fatal("retry did not return the original task's durable recovery receipt")
 	}
 	resumed := f.nextSession(t, sessions)
+	if resumed.Model != original.Model || resumed.Effort != original.Effort {
+		t.Fatalf("resuming changed the task model or effort: %+v", resumed)
+	}
 	if !resumed.Resume || resumed.ID != original.ID || resumed.Directory != original.Directory || resumed.Task.TaskID != task.ID || resumed.Token == original.Token || resumed.Task.AssignmentID == original.Task.AssignmentID || resumed.Task.ResumeRequestID != receipt.ResumeRequest.ID {
 		t.Fatal("MCP recovery replaced the conversation or reused stale relay authorization")
 	}

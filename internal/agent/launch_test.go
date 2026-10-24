@@ -54,7 +54,7 @@ func runLaunchTestHelper() error {
 			return err
 		}
 		report := launchReport{Args: os.Args[1:], Directory: directory, Prompt: string(prompt), Environment: make(map[string]string)}
-		for _, key := range []string{"BRIDGE_OLD_TOKEN", "bridge_old_lower", "CUSTOM_AGENT_CREDENTIAL", TaskTokenEnv, "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CONFIG_DIR", "CLAUDE_CODE_DISABLE_AUTO_MEMORY", "CLAUDE_CODE_SKIP_PROMPT_HISTORY", "CLAUDE_CODE_RESUME_INTERRUPTED_TURN"} {
+		for _, key := range []string{"BRIDGE_OLD_TOKEN", "bridge_old_lower", "CUSTOM_AGENT_CREDENTIAL", TaskTokenEnv, "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CONFIG_DIR", "CLAUDE_CODE_DISABLE_AUTO_MEMORY", "CLAUDE_CODE_SKIP_PROMPT_HISTORY", "CLAUDE_CODE_RESUME_INTERRUPTED_TURN", "CLAUDE_CODE_EFFORT_LEVEL"} {
 			if value, ok := os.LookupEnv(key); ok {
 				report.Environment[key] = value
 			}

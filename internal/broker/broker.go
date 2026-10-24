@@ -493,6 +493,8 @@ type Args struct {
 	WaitMS               int64           `json:"wait_ms,omitempty"`
 	WorkspaceID          string          `json:"workspace_id,omitempty"`
 	Prompt               string          `json:"prompt,omitempty"`
+	Model                string          `json:"model,omitempty"`
+	Effort               string          `json:"effort,omitempty"`
 	IdempotencyKey       string          `json:"idempotency_key,omitempty"`
 	DeadlineMS           int64           `json:"deadline_ms,omitempty"`
 	Outcome              string          `json:"outcome,omitempty"`
@@ -966,6 +968,9 @@ func (b *Broker) submitTask(ctx context.Context, c *ClientPeer, a Args) (model.T
 		if !bounded(a.Prompt, 8192) || !bounded(a.IdempotencyKey, 200) {
 			return model.Err("invalid_arguments", "bounded prompt and idempotency_key required")
 		}
+		if e := model.ValidateTaskOptions(a.Model, a.Effort); e != nil {
+			return e
+		}
 		w, e := tx.Workspace(a.WorkspaceID)
 		if e != nil {
 			return e
@@ -982,7 +987,7 @@ func (b *Broker) submitTask(ctx context.Context, c *ClientPeer, a Args) (model.T
 		if a.DeadlineMS < 1000 || a.DeadlineMS > 86400000 {
 			return model.Err("invalid_arguments", "deadline_ms must be between 1000 and 86400000")
 		}
-		h := storage.Hash(string(model.JSON(taskRequestKey{WorkspaceID: a.WorkspaceID, Prompt: a.Prompt, DeadlineMS: a.DeadlineMS})))
+		h := storage.Hash(string(model.JSON(taskRequestKey{WorkspaceID: a.WorkspaceID, Prompt: a.Prompt, DeadlineMS: a.DeadlineMS, Model: a.Model, Effort: a.Effort})))
 		t, e := tx.TaskByKey(p.ID, a.IdempotencyKey)
 		if e == nil {
 			if t.RequestHash != h {
@@ -1009,7 +1014,7 @@ func (b *Broker) submitTask(ctx context.Context, c *ClientPeer, a Args) (model.T
 		if n >= b.MaxQueued {
 			return model.Err("queue_full", "task queue is full")
 		}
-		t = model.Task{ID: uuid.NewString(), RequesterID: p.ID, WorkspaceID: w.ID, ExecutorID: w.ExecutorID, Prompt: a.Prompt, State: "queued", IdempotencyKey: a.IdempotencyKey, RequestHash: h, DeadlineAt: model.Now() + a.DeadlineMS, CreatedAt: model.Now()}
+		t = model.Task{ID: uuid.NewString(), RequesterID: p.ID, WorkspaceID: w.ID, ExecutorID: w.ExecutorID, Prompt: a.Prompt, Model: a.Model, Effort: a.Effort, State: "queued", IdempotencyKey: a.IdempotencyKey, RequestHash: h, DeadlineAt: model.Now() + a.DeadlineMS, CreatedAt: model.Now()}
 		if e = tx.SaveTask(t); e != nil {
 			return e
 		}

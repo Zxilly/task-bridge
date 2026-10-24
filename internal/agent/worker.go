@@ -347,6 +347,7 @@ func (w *Worker) runSession(ctx context.Context, upstream *mcp.ClientSession, to
 	}
 	session := Session{
 		ID: saved.ID, Directory: saved.Directory, MCPConfig: configPath, Token: relay.Token(), Task: offer.Meta, Resume: resume, Prompt: prompt,
+		Model: task.Model, Effort: task.Effort,
 	}
 	w.log.Info("starting isolated Claude session", "task_id", task.ID, "session_id", session.ID, "resume", resume)
 	monitored := make(chan error, 1)
