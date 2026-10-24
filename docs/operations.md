@@ -74,7 +74,7 @@ bin/task-bridge-agent doctor --config agent.json
 bin/task-bridge-agent run --config agent.json
 ```
 
-省略 `run` 子命令也会启动控制器。`doctor` 不运行 Claude、不调用模型、不联网，只验证配置、可执行文件路径和设备凭据是否存在；不能用它证明 Claude 登录或设备鉴权已通过。控制器日志写入 stderr。每个 A 身份只运行一个控制器，同一 `state_dir` 由文件锁排他使用；停止实例前先检查任务状态。
+省略 `run` 子命令也会启动控制器。`doctor` 不运行 Claude、不调用模型、不联网，只验证配置、可执行文件路径和设备凭据是否存在；不能用它证明 Claude 登录或设备鉴权已通过。控制器日志写入 stderr；`run --log-file /private/path/agent.log` 可同时将 JSON 日志追加到文件，父目录必须已存在。文件不会自动轮转。使用 Windows 任务计划程序时，让任务直接启动 agent，配置此参数保存日志，以便计划任务能跟踪并停止实际控制器进程。每个 A 身份只运行一个控制器，同一 `state_dir` 由文件锁排他使用；停止实例前先检查任务状态。
 
 每个新任务使用不同的 session UUID 和工作目录，首次以 `--session-id` 启动 Claude。显式恢复同一任务时，使用保存的 UUID、原工作目录与 `--resume`；每次启动都生成新的本机 relay 凭据和配置，不使用 `--continue` 或 `--fork-session`。子会话禁用本地执行和文件工具，只加载本次 relay 的 MCP 配置。`task_progress` 与 `task_complete` 仍是回传进度和结果的接口，Claude 的 stdout 或退出码不替代 broker 里的最终结果。
 

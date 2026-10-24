@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -33,14 +34,26 @@ type doctorStatus struct {
 
 func command() *cobra.Command {
 	root := &cobra.Command{Use: "task-bridge-agent", Short: "Run the Task Bridge Claude worker", Version: model.Version, Args: cobra.NoArgs, SilenceUsage: true, SilenceErrors: true}
-	var configPath string
+	var configPath, logPath string
 	root.PersistentFlags().StringVar(&configPath, "config", "agent.json", "Agent JSON configuration path")
+	root.PersistentFlags().StringVar(&logPath, "log-file", "", "Append controller diagnostics to this file as well as stderr")
 	executeWorker := func(cmd *cobra.Command) error {
 		cfg, err := agent.LoadConfig(configPath)
 		if err != nil {
 			return err
 		}
-		logger := slog.New(slog.NewJSONHandler(cmd.ErrOrStderr(), nil))
+		diagnostic := cmd.ErrOrStderr()
+		if logPath != "" {
+			file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+			if err != nil {
+				return fmt.Errorf("open agent log: %w", err)
+			}
+			defer file.Close()
+			// A Windows GUI-subsystem process may have no usable stderr handle.
+			// Retain the file diagnostic before attempting that optional stream.
+			diagnostic = io.MultiWriter(file, diagnostic)
+		}
+		logger := slog.New(slog.NewJSONHandler(diagnostic, nil))
 		worker, err := agent.New(cfg, logger)
 		if err != nil {
 			return err
@@ -50,6 +63,9 @@ func command() *cobra.Command {
 		err = worker.Run(ctx)
 		if errors.Is(err, context.Canceled) {
 			return nil
+		}
+		if err != nil {
+			logger.Error("agent stopped", "error", err)
 		}
 		return err
 	}
