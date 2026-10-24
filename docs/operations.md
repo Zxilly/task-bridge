@@ -62,7 +62,7 @@ Windows 的 `root` 使用 Windows 路径，`bash_path` 通常为 `C:\Program Fil
 | `token_env` 或 `token_file` | `claude` 角色设备 token，二选一；与 Claude 账号登录分开 |
 | `claude_path` | Claude CLI 名称或可执行文件路径，默认 `claude` |
 | `state_dir` | 私有状态目录，默认配置目录下的 `agent-state`；持有排他锁，保存未完成任务的会话映射与工作目录 |
-| `model` | 可选；未填写时使用 Claude 的正常模型选择 |
+| `model` | 可选；任务未指定 `model` 时使用此默认值，均未填写时使用 Claude 的正常模型选择 |
 | `allow_insecure_ws` | 仅为受控开发网络显式允许非 loopback 的明文 WS，默认关闭 |
 
 相对 `state_dir` 和 `token_file` 以配置文件目录解析；含目录分隔符的相对 `claude_path` 也使用该基准。配置不做 `${VAR}` 字符串展开。不要将 token 提交到仓库或放在命令行参数中。

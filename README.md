@@ -119,6 +119,8 @@ bin/task-bridge-agent run --config agent.json
 
 B 工具包括 `tasks_submit`、`tasks_run`、`tasks_get`、`tasks_wait`、`tasks_resume`、`tasks_cancel`、`tasks_list` 和 `tasks_events`。控制器接收并领取分派后启动 Claude；子进程通过 relay 使用 `bash` 工具，再调用 `task_complete` 保存结果。Claude 的终端回复和进程退出码不代替服务端最终结果。完整工具字段及恢复语义见 [协议文档](docs/protocol.md)。
 
+`tasks_submit` 和 `tasks_run` 可通过可选的 `model`（如 `opus`、`sonnet` 或完整模型 ID）及 `effort`（`low`、`medium`、`high`、`xhigh`、`max`）指定该任务的模型和思考强度。任务级模型覆盖 agent 的默认模型；省略参数时保留现有默认行为。选择会保存到任务，并在恢复原会话时沿用；实际可用范围取决于 A 的 Claude 版本和账号。
+
 新提交的 `prompt` 必须使用英文：1–8192 字节，仅允许可打印 ASCII 与 TAB/LF/CR，并且至少包含一个 `A–Z` 或 `a–z`。这项规则同时适用于 `tasks_submit` 和 `tasks_run`。已有任务的相同 key、相同内容重试仍读取原记录；恢复旧任务不会重新校验或改写其原始 prompt。
 
 ## 行为边界

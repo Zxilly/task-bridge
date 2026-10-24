@@ -80,8 +80,8 @@ B 的 stdio 工具由官方 MCP Go SDK 托管。B 到 broker 的控制连接独�
 
 | 工具 | 必需参数 | 可选参数与行为 |
 | --- | --- | --- |
-| `tasks_submit` | `workspace_id, prompt, idempotency_key` | `deadline_ms`；持久化成功后返回 task_id |
-| `tasks_run` | 同 submit | `wait_ms`；提交后执行一次有界等待 |
+| `tasks_submit` | `workspace_id, prompt, idempotency_key` | `deadline_ms, model, effort`；持久化成功后返回 task_id |
+| `tasks_run` | 同 submit | 同 submit 的可选参数，另有 `wait_ms`；提交后执行一次有界等待 |
 | `tasks_get` | `task_id` | 任务与最近命令快照 |
 | `tasks_wait` | `task_id` | `wait_ms`；超时返回 pending 与快照 |
 | `tasks_resume` | `task_id, idempotency_key` | 显式请求恢复原任务；返回原 task_id 与持久 resume_request，不等待任务完成 |
@@ -90,6 +90,20 @@ B 的 stdio 工具由官方 MCP Go SDK 托管。B 到 broker 的控制连接独�
 | `tasks_events` | `task_id` | `after_seq, limit`；读取进度事件 |
 
 任务 deadline 默认为 30 分钟，可设 1 秒至 24 小时。B 等待默认 25 秒，上限 60 秒。等待响应包含 `pending`、`task_id` 和 `snapshot`。网络断开时提交结果可能不明，使用相同 idempotency key重新提交找回原任务。
+
+`model` 和 `effort` 均可独立省略或设为空字符串。`model` 接受 Claude 模型别名（如 `opus`、`sonnet`）或完整模型 ID，最多 1024 字节，只允许无空格的可打印 ASCII，且不能以 `-` 开头。任务级 `model` 优先于 A 的 agent 配置；均未设置时使用 Claude 的正常模型选择。`effort` 可设为 `low`、`medium`、`high`、`xhigh`、`max`；省略时保留 Claude 的设置和环境默认值。实际支持的模型与强度由 A 上的 Claude 版本、账号和 provider 决定；broker 不验证模型访问权限。默认逐任务控制器将它们分别传给 Claude 的 `--model`、`--effort`，显式强度同时覆盖继承的 `CLAUDE_CODE_EFFORT_LEVEL`。可选手工交互 channel 会话由操作者自行选择模型与强度。
+
+这两个字段持久化在 Task 中，随任务查询返回，显式恢复时沿用。它们也参与提交幂等校验：相同 key 修改或移除任一已设置的值会返回 `idempotency_conflict`；二者均省略时保留旧版请求哈希，旧任务可按原请求重试。无效字段返回 `invalid_arguments`，不创建任务或分派。例如：
+
+```json
+{
+  "workspace_id": "demo",
+  "prompt": "Inspect the workspace and report the test results.",
+  "idempotency_key": "inspect-demo-001",
+  "model": "opus",
+  "effort": "high"
+}
+```
 
 新任务 `prompt` 必须使用英文。`tasks_submit` 和 `tasks_run` 共用以下校验：1–8192 字节，仅允许 0x20–0x7E 的可打印 ASCII 以及 TAB（0x09）、LF（0x0A）、CR（0x0D），并至少包含一个 `A–Z` 或 `a–z`。非 ASCII 字符、其他控制字节或不含英文字母的内容返回 `invalid_arguments`，不创建任务、事件、命令或分派。这是确定性的字符约束，不执行自然语言识别。
 
