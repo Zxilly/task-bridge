@@ -39,7 +39,7 @@ func TestBuiltClientStdioAndHostEOF(t *testing.T) {
 	}
 	t.Cleanup(func() { host.Close() })
 	listed, e := host.ListTools(f.ctx, nil)
-	if e != nil || len(listed.Tools) != 8 {
+	if e != nil || len(listed.Tools) != 9 {
 		t.Fatalf("stdio tool listing: %v %+v", e, listed)
 	}
 	foundResume := false
@@ -48,6 +48,20 @@ func TestBuiltClientStdioAndHostEOF(t *testing.T) {
 	}
 	if !foundResume {
 		t.Fatal("stdio tool listing omitted tasks_resume")
+	}
+	now := time.Now().Unix()
+	tool(t, f.ctx, f.a, "agent_usage_update", model.AgentUsageUpdateArgs{Usage: model.AccountUsage{
+		Source: model.AccountUsageSource, Status: "allowed", ObservedAt: now,
+		Windows: map[string]model.UsageWindow{"five_hour": {UsedPercentage: new(24.0), ResetsAt: new(now + 3600), ObservedAt: now}},
+	}})
+	usageResult := tool(t, f.ctx, host, "agents_usage", model.AgentsUsageArgs{WorkspaceID: "demo"})
+	usageAgents, ok := usageResult["agents"].([]any)
+	if !ok || len(usageAgents) != 1 {
+		t.Fatalf("stdio account usage query: %+v", usageResult)
+	}
+	usageAgent := usageAgents[0].(map[string]any)
+	if usageAgent["agent_id"] != "a1" || usageAgent["usage"].(map[string]any)["available"] != true {
+		t.Fatalf("stdio account usage did not reach connection side: %+v", usageResult)
 	}
 	submit := tool(t, f.ctx, host, "tasks_submit", map[string]any{"workspace_id": "demo", "prompt": "Verify real stdio transport.", "idempotency_key": "stdio-1"})
 	id, assignment := accept(t, f)

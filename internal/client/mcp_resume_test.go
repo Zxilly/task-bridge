@@ -16,8 +16,8 @@ func TestClientMCPResumeAdvertisesSameTaskRecoveryAndReceipt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.Tools) != 8 {
-		t.Fatalf("B exposes %d tools, want 8", len(listed.Tools))
+	if len(listed.Tools) != 9 {
+		t.Fatalf("B exposes %d tools, want 9", len(listed.Tools))
 	}
 	for _, tool := range listed.Tools {
 		if tool.Name != "tasks_resume" {

@@ -19,10 +19,12 @@ import (
 )
 
 type agent struct {
-	p         model.Principal
-	id        string
-	notify    model.ChannelNotifier
-	lastOffer int64
+	p               model.Principal
+	id              string
+	notify          model.ChannelNotifier
+	lastOffer       int64
+	usage           model.AccountUsage
+	usageReceivedAt int64
 }
 type ClientPeer struct {
 	Principal  model.Principal
@@ -607,6 +609,9 @@ func (b *Broker) CallAgent(ctx context.Context, p model.Principal, cid, method s
 	if p.Kind != "claude" {
 		return nil, model.Err("forbidden", "Claude identity required")
 	}
+	if method == "agent_usage_update" {
+		return b.updateAgentUsage(ctx, p, cid, raw)
+	}
 	a, e := parse(raw)
 	if e != nil {
 		return nil, e
@@ -836,6 +841,9 @@ func (b *Broker) CallClient(ctx context.Context, c *ClientPeer, method string, r
 	}
 	if method == "executor_reconcile" {
 		return b.reconcileExecutor(ctx, c, raw)
+	}
+	if method == "agents_usage" {
+		return b.agentsUsage(ctx, c, raw)
 	}
 	a, e := parse(raw)
 	if e != nil {

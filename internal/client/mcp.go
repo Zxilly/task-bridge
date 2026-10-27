@@ -20,18 +20,20 @@ type WaitArgs = model.TaskWaitArgs
 type CancelArgs = model.TaskCancelArgs
 type ListArgs = model.TaskListArgs
 type EventsArgs = model.TaskEventsArgs
+type AgentsUsageArgs = model.AgentsUsageArgs
 
 type clientTaskRequest interface {
 	model.ClientRequest
 	TaskIdentifier() string
 }
 
-// MCPServer provides only task tools. Its handlers can wait concurrently while
-// the independent outbound connection continues executing remote commands.
+// MCPServer provides task tools and account usage queries. Its handlers can wait
+// concurrently while the outbound connection continues executing commands.
 func (c *Client) MCPServer() *mcp.Server {
 	implementation := &mcp.Implementation{Name: "task-bridge-client", Version: model.Version}
 	server := mcp.NewServer(implementation, nil)
 	addClientResultBounds(server, implementation)
+	addClientTool(server, c, "Query the latest passively reported Claude account usage for connected A agents in a configured workspace, without submitting a task. Returns available five_hour/seven_day percentages, Unix reset times and freshness. Missing or stale data is unknown. Optional agent_id filters the result; required when more than 10 agents are connected. This does not refresh the account or call a model.", func(args AgentsUsageArgs) error { return c.validateWorkspace(args.WorkspaceID) })
 	addClientTool(server, c, "Submit a durable task. Prompt must be English only (ASCII): printable ASCII plus TAB/LF/CR and at least one A-Z or a-z letter. Reuse idempotency_key when retrying the same task.", func(args SubmitArgs) error { return c.validateWorkspace(args.WorkspaceID) })
 	addClientTool(server, c, "Get durable task status and the final result.", func(TaskArgs) error { return nil })
 	addClientTool(server, c, "Request durable recovery of this same task's original Claude conversation on A. Reuse idempotency_key when retrying this recovery request; a different key is rejected while a request is pending. A pending or accepted receipt does not mean recovery succeeded or the task completed. Use tasks_get or tasks_wait for task status and the durable final result; unresolved execution still requires reconciliation.", func(ResumeArgs) error { return nil })
@@ -95,7 +97,11 @@ func clientRunResult(data json.RawMessage, taskID string) *mcp.CallToolResult {
 func addClientTool[In clientTaskRequest](server *mcp.Server, c *Client, description string, validate func(In) error) {
 	var input In
 	name := input.Method()
-	mcp.AddTool(server, &mcp.Tool{Name: name, Description: description}, func(ctx context.Context, req *mcp.CallToolRequest, args In) (*mcp.CallToolResult, any, error) {
+	tool := &mcp.Tool{Name: name, Description: description}
+	if name == "agents_usage" {
+		tool.Annotations = &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: new(false)}
+	}
+	mcp.AddTool(server, tool, func(ctx context.Context, req *mcp.CallToolRequest, args In) (*mcp.CallToolResult, any, error) {
 		id := args.TaskIdentifier()
 		if err := validate(args); err != nil {
 			return clientToolResult(nil, err, id), nil, nil

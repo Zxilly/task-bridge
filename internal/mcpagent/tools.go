@@ -45,6 +45,7 @@ func toolDefinitions() []toolDefinition {
 	cancel := command()
 	cancel["reason"] = textSchema(1024)
 	return []toolDefinition{
+		{"agent_usage_update", "Controller-only: report passively observed Claude Code account rate limits for B-side queries. Not exposed to task subprocesses.", []string{"usage"}, map[string]*jsonschema.Schema{"usage": {Type: "object"}}, false},
 		{"task_accept", "Accept a channel task offer using its exact task_id and assignment_id.", []string{"task_id", "assignment_id"}, assignment, false},
 		{"task_get", "Read the assigned task and command snapshot.", []string{"task_id"}, map[string]*jsonschema.Schema{"task_id": id()}, true},
 		{"task_resume", "Claim an explicit B recovery request with task_id and resume_request_id. A manual MCP caller may instead provide previous_assignment_id when no recovery request is pending. The broker requires one of these IDs and checks reconciliation before issuing a new assignment.", []string{"task_id"}, map[string]*jsonschema.Schema{"task_id": id(), "previous_assignment_id": id(), "resume_request_id": id()}, false},
