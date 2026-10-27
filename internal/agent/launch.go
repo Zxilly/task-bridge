@@ -21,6 +21,7 @@ type Session struct {
 	Task                                    model.ChannelMetadata
 	Resume                                  bool
 	Model, Effort                           string
+	Usage                                   *accountUsage
 }
 
 type Launcher interface {
@@ -63,7 +64,7 @@ func (l CommandLauncher) Launch(ctx context.Context, session Session) error {
 		"--strict-mcp-config", "--mcp-config", session.MCPConfig,
 		"--settings", `{"autoMemoryEnabled":false,"disableAllHooks":true,"env":{"CLAUDE_CODE_SKIP_PROMPT_HISTORY":"0","CLAUDE_CODE_RESUME_INTERRUPTED_TURN":"0"}}`,
 		"--setting-sources", "user", "--disable-slash-commands",
-		"--permission-prompts", "none", "--output-format", "json",
+		"--permission-prompts", "none", "--output-format", "stream-json", "--verbose",
 	}
 	modelName := session.Model
 	if modelName == "" {
@@ -80,7 +81,9 @@ func (l CommandLauncher) Launch(ctx context.Context, session Session) error {
 	cmd.Env = l.environment(session.Token, session.Effort)
 	cmd.Stdin = strings.NewReader(session.Prompt)
 	output := &launchDiagnostic{}
-	cmd.Stdout, cmd.Stderr = output, output
+	stream := &usageStream{diagnostic: &launchDiagnostic{}, usage: session.Usage, sessionID: session.ID}
+	defer stream.finish()
+	cmd.Stdout, cmd.Stderr = stream, output
 	cmd.WaitDelay = 3 * time.Second
 	process, err := processcontrol.PrepareForParentExit(cmd)
 	if err != nil {
@@ -109,7 +112,16 @@ func (l CommandLauncher) Launch(ctx context.Context, session Session) error {
 		return ctx.Err()
 	}
 	if err != nil {
-		diagnostic := strings.ReplaceAll(output.String(), session.Token, "[redacted]")
+		// Verbose stdout can fill its buffer before a later stderr failure.
+		// Preserve stderr first, while still including stdout-only CLI errors.
+		diagnostic := output.String()
+		if stdout := stream.diagnostic.String(); stdout != "" {
+			if diagnostic != "" {
+				diagnostic += "\n"
+			}
+			diagnostic += stdout
+		}
+		diagnostic = strings.ReplaceAll(diagnostic, session.Token, "[redacted]")
 		if len(diagnostic) > maxLaunchDiagnosticBytes {
 			diagnostic = diagnostic[:maxLaunchDiagnosticBytes] + "\n[output truncated]"
 		}

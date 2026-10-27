@@ -86,9 +86,16 @@ func runLaunchTestHelper() error {
 		fmt.Fprintln(os.Stderr, "No conversation found with session ID:", os.Args[3])
 		os.Exit(18)
 	case "fail":
+		fmt.Fprint(os.Stdout, strings.Repeat("verbose output ", 4096))
 		fmt.Fprintln(os.Stderr, "controlled CLI failure", os.Getenv(TaskTokenEnv))
 		fmt.Fprint(os.Stderr, strings.Repeat("x", 64<<10))
 		os.Exit(17)
+	case "usage":
+		// Emit enough ordinary output to fill the failure diagnostic buffer.
+		fmt.Fprintln(os.Stdout, strings.Repeat("x", 32<<10))
+		fmt.Fprintf(os.Stdout, `{"type":"rate_limit_event","session_id":%q,"rate_limit_info":{"status":"allowed","unifiedWindows":{"five_hour":{"utilization":0.24,"resetsAt":4102444800},"seven_day":{"utilization":0.13,"resetsAt":4102444800}}}}`+"\n", os.Args[3])
+		fmt.Fprintf(os.Stderr, `{"type":"rate_limit_event","session_id":%q,"rate_limit_info":{"status":"rejected","rateLimitType":"five_hour","utilization":1}}`+"\n", os.Args[3])
+		time.Sleep(30 * time.Second)
 	case "tree":
 		child := exec.Command(os.Args[0])
 		child.Env = append(os.Environ(), "TASK_BRIDGE_LAUNCH_TEST_MODE=descendant")
@@ -166,7 +173,7 @@ func TestCommandLauncherIsolatesArgumentsEnvironmentAndDirectory(t *testing.T) {
 			"--strict-mcp-config", "--mcp-config", session.MCPConfig,
 			"--settings", `{"autoMemoryEnabled":false,"disableAllHooks":true,"env":{"CLAUDE_CODE_SKIP_PROMPT_HISTORY":"0","CLAUDE_CODE_RESUME_INTERRUPTED_TURN":"0"}}`,
 			"--setting-sources", "user", "--disable-slash-commands",
-			"--permission-prompts", "none", "--output-format", "json", "--model", "test-model",
+			"--permission-prompts", "none", "--output-format", "stream-json", "--verbose", "--model", "test-model",
 		}
 		if !reflect.DeepEqual(report.Args, wantArgs) {
 			t.Fatalf("arguments = %#v, want %#v", report.Args, wantArgs)
