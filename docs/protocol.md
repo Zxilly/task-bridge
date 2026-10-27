@@ -1,6 +1,57 @@
 # 协议
 
-字段使用 snake_case。时间间隔单位为毫秒，持久时间戳为 UTC Unix 毫秒。稳定的 task/command ID 与连接 ID 分开使用。数据结构由 `internal/model` 定义，业务授权由 broker 校验。
+字段使用 snake_case。时间间隔单位为毫秒，持久时间戳为 UTC Unix 毫秒；账号额度快照的时间戳使用 Claude 的 Unix 秒，见下节。稳定的 task/command ID 与连接 ID 分开使用。数据结构由 `internal/model` 定义，业务授权由 broker 校验。
+
+## 连接侧：账号额度
+
+连接侧 B 的 stdio MCP 提供只读 `agents_usage`，必需参数为已配置的 `workspace_id`，可选 `agent_id` 用于筛选。查询无需任务 ID，不创建任务、不调用模型。broker 校验 B 的当前连接、executor 对工作区的所有权、设备凭据范围及 B 上报的工作区集合，仅返回该工作区在线的 A；没有在线 A 或筛选无匹配时返回空数组。
+
+```json
+{"workspace_id":"demo","agent_id":"claude-demo"}
+```
+
+最多一次返回 10 个 A，超出时返回 `result_too_large`，需用 `agent_id` 筛选；结果按 agent ID 排序。默认 A 控制器在子进程运行期间每秒检查额度快照，仅在变化或上次报告失败时调用 controller-only `agent_usage_update` 上报，子进程结束后再上报最后快照。该更新工具不转发到 Claude 子会话，Claude 的任务提示也不增加额度处理要求。
+
+控制器使用 `--output-format stream-json --verbose`，仅从当前 Claude session 的 stdout `rate_limit_event` 采集快照。`rate_limit_info` 的已文档化单窗口字段包括 `rateLimitType`、`utilization` 和 `resetsAt`；同时兼容观测到的 `unifiedWindows` 多窗口字段。后者尚无完整 SDK 契约，缺失时不能保证同时获得两个窗口。[官方 RateLimitInfo](https://code.claude.com/docs/en/agent-sdk/python#ratelimitinfo)、[上游多窗口字段记录](https://github.com/anthropics/claude-code/issues/91857)。
+
+结果通过一个 JSON TextContent 返回，以下展示一个已收到两个窗口的 A：
+
+```json
+{
+  "workspace_id": "demo",
+  "agents": [{
+    "agent_id": "claude-demo",
+    "received_at": 1793000001,
+    "usage": {
+      "available": true,
+      "source": "claude_code_rate_limit_event",
+      "status": "allowed",
+      "observed_at": 1793000000,
+      "stale": false,
+      "windows": {
+        "five_hour": {
+          "used_percentage": 24,
+          "resets_at": 1793010000,
+          "observed_at": 1793000000,
+          "stale": false
+        },
+        "seven_day": {
+          "used_percentage": 13,
+          "resets_at": 1793500000,
+          "observed_at": 1793000000,
+          "stale": false
+        }
+      }
+    }
+  }]
+}
+```
+
+所有 `observed_at`、`received_at` 和 `resets_at` 均为 UTC Unix **秒**。`observed_at` 是 A 采集时间，`received_at` 是 broker 接收时间，尚无报告时省略后者。`used_percentage` 从 CLI 的 0–1 利用率换算为 0–100；模型专项窗口 `seven_day_opus`、`seven_day_sonnet` 在 CLI 上报时也会保留。`status` 是最后一个合法事件的 `allowed`、`allowed_warning` 或 `rejected`，不是查询时重新请求账号得到的状态。
+
+`available` 表示至少收到一个窗口，并不保证两个窗口齐全或字段完整。缺失的窗口、百分比或重置时间均表示 unknown；有效的零百分比会明确保留。尚无窗口时返回 `available: false`、`windows: {}` 和 `reason`。每个窗口保留各自采集时间；超过 300 秒或到达其重置时间时 `stale: true`。根级 `stale` 在尚无窗口、最后事件超过 300 秒或任一窗口过期时为 true；过期值保留供核对，不推算新窗口为零。
+
+快照保存在 A 和 broker 内存中，任务结束后仍可通过在线 A 的最后快照查询；A 断线后不再列出，重连或 broker 重启后从 unknown 开始。每次新子进程启动（含恢复）也重新采集并上报，不从 transcript 或其他会话复用。更新只接受当前 A 的认证连接，旧连接不能覆盖新连接的快照。该工具不读取 Claude 凭据、不额外请求账号 API，也不为查询启动模型回合。数据随 Claude 自身事件刷新，无法保证空闲时实时更新；首次响应前、API key 登录、手工 channel 模式或 CLI 不提供字段时可能始终没有数据。缺失或过期时不能据此推断剩余额度。broker 查询时重新计算过期标记，不把较新的接收时间当作较新的采集时间。
 
 ## A：WebSocket MCP
 
@@ -38,6 +89,7 @@ channel 示例：
 
 | 工具 | 必需参数 | 可选参数与行为 |
 | --- | --- | --- |
+| `agent_usage_update` | `usage` | 仅供 A 控制器上报当前连接的账号额度；不向 Claude 子会话 relay 暴露。最多 4 个已知窗口，参数最多 8 KiB；校验百分比与时间戳，派生可用性和过期标记 |
 | `task_accept` | `task_id, assignment_id` | 接受 offered 分派；同一有效分派可重复接受 |
 | `task_get` | `task_id` | 返回任务与最近命令快照 |
 | `task_resume` | `task_id` | 控制器提供 `resume_request_id` 领取 B 的恢复请求；兼容手工 MCP 提供 `previous_assignment_id`，有 pending 请求时禁止绕过。两种 ID 必须严格二选一，均最多 128 字节 |
@@ -88,6 +140,7 @@ B 的 stdio 工具由官方 MCP Go SDK 托管。B 到 broker 的控制连接独�
 | `tasks_cancel` | `task_id` | `reason`；区分取消申请和停止确认 |
 | `tasks_list` | 无 | `workspace_id, cursor, limit`；只列授权范围 |
 | `tasks_events` | `task_id` | `after_seq, limit`；读取进度事件 |
+| `agents_usage` | `workspace_id` | `agent_id`；查询该工作区在线 A 最近上报的账号额度，不创建任务 |
 
 任务 deadline 默认为 30 分钟，可设 1 秒至 24 小时。B 等待默认 25 秒，上限 60 秒。等待响应包含 `pending`、`task_id` 和 `snapshot`。网络断开时提交结果可能不明，使用相同 idempotency key重新提交找回原任务。
 

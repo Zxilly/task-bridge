@@ -108,7 +108,9 @@
 | 远程 CI | [见 Actions](https://github.com/Zxilly/task-bridge/actions/workflows/ci.yml) | Linux、Windows、Linux race 和容器构建以对应提交的 GitHub Actions 记录为准 |
 | 真实 Claude 模型与 transcript | 未执行 | 不使用模拟 launcher、SDK 或 helper 结果代替真实 Claude 验收 |
 
-本机静态检查确认 Claude Code 2.1.283 提供 `--print`、`--session-id`、`--resume`、`--tools`、`--allowedTools`、`--strict-mcp-config`、`--mcp-config` 和 `--permission-prompts`。这些参数与 [CLI reference](https://code.claude.com/docs/en/cli-reference#cli-flags) 对照过，但未使用真实账号执行付费推理。自动化测试可以检查会话参数、cwd、relay 授权、进程清理和 broker 状态；真实 Claude 是否保存、恢复上下文并按要求调用工具仍须单独验收。
+2026-10-27 增加连接侧 `agents_usage` 额度查询。Windows 全量测试、vet、三程序构建，以及 A、broker、B 包 race 通过。真实 helper 子进程在持续运行时输出额度事件，A 控制器通过 WebSocket MCP 自动上报，B 的官方 MCP 客户端读到两个窗口；另覆盖无任务查询、单窗口、字段缺失、零用量、过期、工作区授权、旧连接隔离、超长行和 stderr 隔离。测试明确检查 Claude 子会话没有额度工具或处理提示。编译的 B CLI stdio 测试发现九个工具并查询到已上报快照。helper 不调用模型；本机 Claude 未登录，未验证真实订阅账号的事件字段或刷新频率。`unifiedWindows` 为上游观测字段，兼容性边界见 [账号额度协议](protocol.md#连接侧账号额度)。
+
+本机静态检查确认 Claude Code 2.1.283 提供 `--print`、`--session-id`、`--resume`、`--tools`、`--allowedTools`、`--strict-mcp-config`、`--mcp-config`、`--permission-prompts`、`--output-format` 和 `--verbose`。这些参数与 [CLI reference](https://code.claude.com/docs/en/cli-reference#cli-flags) 对照过，但未使用真实账号执行付费推理。自动化测试可以检查会话参数、cwd、relay 授权、进程清理和 broker 状态；真实 Claude 是否保存、恢复上下文并按要求调用工具仍须单独验收。
 
 默认子进程复用用户正常 Claude 登录，不使用会改变 OAuth 行为的 `--bare`。它保留 transcript 持久化，关闭 auto memory 和普通 hooks；新任务使用 `--session-id`，显式恢复同一任务使用 `--resume`，不使用 `--continue` 或 `--fork-session`。用户及 managed 规则仍可适用；managed hooks 不受普通会话设置的关闭覆盖。[会话恢复](https://code.claude.com/docs/en/sessions#what-a-resumed-session-restores)、[auto memory](https://code.claude.com/docs/en/settings-reference#automemoryenabled) 和 [hooks](https://code.claude.com/docs/en/settings-reference#disableallhooks) 说明了这些边界。
 

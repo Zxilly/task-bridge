@@ -115,9 +115,11 @@ bin/task-bridge-agent run --config agent.json
 
 自动记忆和普通 hooks 在子会话中关闭。用户及管理层的 Claude 规则仍可能适用；这些规则与前一个任务的聊天历史不同。该行为隔离任务上下文，不提供操作系统沙箱。参数、权限和恢复边界见 [运维步骤](docs/operations.md)。
 
+连接侧 B 可通过只读 `agents_usage` 工具，按 `workspace_id` 查询在线 A 最近上报的 Claude 账号额度，包括可用的 5 小时／每周已用百分比、重置时间和数据采集时间。A 控制器从子进程流式事件采集并自动上报；Claude 子会话无需参与。查询不会创建任务；没有数据时返回 unknown，超过 5 分钟或窗口已重置时标记 `stale`。字段支持及真实账号验收边界见 [账号额度协议](docs/protocol.md#连接侧账号额度)。
+
 可选的手工交互 channel 模式仍使用 `examples/claude-mcp.json`，它在多个任务之间保留同一会话。启用前先停止同一 agent 身份的控制器；准入和启动步骤见 [兼容性记录](docs/compatibility.md)。新控制器的 headless 子进程不加载 development channel。
 
-B 工具包括 `tasks_submit`、`tasks_run`、`tasks_get`、`tasks_wait`、`tasks_resume`、`tasks_cancel`、`tasks_list` 和 `tasks_events`。控制器接收并领取分派后启动 Claude；子进程通过 relay 使用 `bash` 工具，再调用 `task_complete` 保存结果。Claude 的终端回复和进程退出码不代替服务端最终结果。完整工具字段及恢复语义见 [协议文档](docs/protocol.md)。
+B 工具包括 `tasks_submit`、`tasks_run`、`tasks_get`、`tasks_wait`、`tasks_resume`、`tasks_cancel`、`tasks_list`、`tasks_events` 和 `agents_usage`。控制器接收并领取分派后启动 Claude；子进程通过 relay 使用 `bash` 工具，再调用 `task_complete` 保存结果。Claude 的终端回复和进程退出码不代替服务端最终结果。完整工具字段及恢复语义见 [协议文档](docs/protocol.md)。
 
 `tasks_submit` 和 `tasks_run` 可通过可选的 `model`（如 `opus`、`sonnet` 或完整模型 ID）及 `effort`（`low`、`medium`、`high`、`xhigh`、`max`）指定该任务的模型和思考强度。任务级模型覆盖 agent 的默认模型；省略参数时保留现有默认行为。选择会保存到任务，并在恢复原会话时沿用；实际可用范围取决于 A 的 Claude 版本和账号。
 

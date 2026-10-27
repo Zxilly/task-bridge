@@ -126,7 +126,9 @@ For hosts that use an `mcpServers` object, merge this entry while preserving exi
 
 Let the host start and own the subprocess; do not start an extra `task-bridge-client mcp` as a background daemon. Stdout is reserved for MCP and diagnostics go to stderr. One executor/journal can be used by only one B process at a time. Reuse or cleanly stop an existing host-owned instance before replacing it; inspect active work before stopping it, because host shutdown also stops its local command execution.
 
-Reload or restart only the relevant host connection using the host's supported workflow. Confirm discovery of these eight tools: `tasks_submit`, `tasks_run`, `tasks_get`, `tasks_wait`, `tasks_resume`, `tasks_cancel`, `tasks_list`, and `tasks_events`.
+Reload or restart only the relevant host connection using the host's supported workflow. Confirm discovery of these nine tools: `tasks_submit`, `tasks_run`, `tasks_get`, `tasks_wait`, `tasks_resume`, `tasks_cancel`, `tasks_list`, `tasks_events`, and `agents_usage`.
+
+Use `agents_usage` with a configured `workspace_id` and optional `agent_id` to query the latest account usage reported by connected A controllers, without submitting a task. The result includes available five-hour and weekly usage percentages, reset times, observation timestamps, and stale flags. An empty agent list means no matching A is connected. An agent with `available: false` has no account window to report; missing or stale fields are unknown. The query does not force an account refresh or call a model, and Claude task subprocesses do not participate.
 
 Call `tasks_list` with the configured `workspace_id` and a small `limit`, such as `1`. A successful response, including an empty list, verifies a real authenticated broker RPC from this client. A local tool list alone does not prove the broker connection is usable. If using an external tool timeout, allow the bounded waits to finish; `tasks_wait` can wait up to 60 seconds and `tasks_run` also performs submission.
 

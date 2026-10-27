@@ -36,6 +36,8 @@ Do not replace an existing subscription login with API credentials, copy authent
 
 The installed CLI must support `--print`, `--session-id`, `--resume`, `--tools`, `--allowedTools`, `--strict-mcp-config`, `--mcp-config`, and `--permission-prompts`. Check the actual `--help`; do not claim that a version number alone proves a live run works.
 
+The controller also uses `--output-format stream-json --verbose` to observe account rate-limit events and automatically reports snapshots to the broker for B-side `agents_usage` queries. The Claude task subprocess has no usage-query tool or quota-management prompt. Reporting makes no extra account request. Missing fields are unknown; observations older than five minutes or past their reset time are stale. Account and CLI support determine which windows appear; a successful B query does not prove that live account usage was reported.
+
 Prefer an existing agent binary from a trusted installation or platform package. If a source build is needed, use a verified checkout of [Zxilly/task-bridge](https://github.com/Zxilly/task-bridge), preserve existing files, and record its revision. From its root:
 
 ```sh
