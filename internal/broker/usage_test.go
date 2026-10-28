@@ -40,6 +40,7 @@ func TestAgentsUsageQueriesWithoutTaskAndRecomputesFreshness(t *testing.T) {
 		t.Fatalf("initial usage: %+v", initial)
 	}
 	u := fixtureUsage(time.Now())
+	u.Source = model.AccountUsageCommandSource
 	u.Reason = "untrusted reporter explanation"
 	reportFixtureUsage(t, f, u)
 	result := queryFixtureUsage(t, f, "claude-1")
@@ -47,6 +48,9 @@ func TestAgentsUsageQueriesWithoutTaskAndRecomputesFreshness(t *testing.T) {
 		t.Fatalf("agent filter: %+v", result)
 	}
 	agent := result.Agents[0]
+	if agent.Usage.Source != model.AccountUsageCommandSource {
+		t.Fatal("broker lost the local-command quota source")
+	}
 	if !agent.Usage.Available || agent.Usage.Stale || agent.ReceivedAt == 0 || *agent.Usage.Windows["five_hour"].UsedPercentage != 24 || *agent.Usage.Windows["seven_day"].UsedPercentage != 0 || agent.Usage.Reason != "" {
 		t.Fatalf("reported usage: %+v", result)
 	}
@@ -59,8 +63,9 @@ func TestAgentsUsageQueriesWithoutTaskAndRecomputesFreshness(t *testing.T) {
 	}
 	u = fixtureUsage(time.Now().Add(-301 * time.Second))
 	u.Available, u.Stale = false, false
-	reportFixtureUsage(t, f, u)
-	if got := queryFixtureUsage(t, f, "").Agents[0].Usage; !got.Available || !got.Stale || !got.Windows["five_hour"].Stale {
+	staleFixture := newFixture(t)
+	reportFixtureUsage(t, staleFixture, u)
+	if got := queryFixtureUsage(t, staleFixture, "").Agents[0].Usage; !got.Available || !got.Stale || !got.Windows["five_hour"].Stale {
 		t.Fatalf("old data freshness trusted reporter: %+v", got)
 	}
 	u = fixtureUsage(time.Now())
@@ -70,6 +75,20 @@ func TestAgentsUsageQueriesWithoutTaskAndRecomputesFreshness(t *testing.T) {
 	reportFixtureUsage(t, f, u)
 	if got := queryFixtureUsage(t, f, "").Agents[0].Usage; !got.Stale || !got.Windows["five_hour"].Stale {
 		t.Fatalf("reset window remained current: %+v", got)
+	}
+}
+
+func TestAgentUsageDoesNotReplaceFreshRefreshWithDelayedTaskEvent(t *testing.T) {
+	f := newFixture(t)
+	fresh := fixtureUsage(time.Now())
+	fresh.Source = model.AccountUsageCommandSource
+	reportFixtureUsage(t, f, fresh)
+	delayed := fixtureUsage(time.Now().Add(-time.Minute))
+	*delayed.Windows["five_hour"].UsedPercentage = 1
+	reportFixtureUsage(t, f, delayed)
+	got := queryFixtureUsage(t, f, "").Agents[0].Usage
+	if got.Source != model.AccountUsageCommandSource || got.ObservedAt != fresh.ObservedAt || *got.Windows["five_hour"].UsedPercentage != 24 {
+		t.Fatalf("delayed event rolled back a newer local-command refresh: %+v", got)
 	}
 }
 

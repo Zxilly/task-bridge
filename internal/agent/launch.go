@@ -152,7 +152,10 @@ func (l CommandLauncher) environment(token, effort string) []string {
 		// an inherited value so a task's explicit choice always reaches Claude.
 		env = append(env, "CLAUDE_CODE_EFFORT_LEVEL="+effort)
 	}
-	return append(env, TaskTokenEnv+"="+token, "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1", "CLAUDE_CODE_RESUME_INTERRUPTED_TURN=0")
+	if token != "" {
+		env = append(env, TaskTokenEnv+"="+token)
+	}
+	return append(env, "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1", "CLAUDE_CODE_RESUME_INTERRUPTED_TURN=0")
 }
 
 // launchDiagnostic drains both streams while retaining bounded failure detail.

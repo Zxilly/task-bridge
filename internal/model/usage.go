@@ -6,6 +6,7 @@ import (
 )
 
 const AccountUsageSource = "claude_code_rate_limit_event"
+const AccountUsageCommandSource = "claude_code_usage_command"
 
 type UsageWindow struct {
 	UsedPercentage *float64 `json:"used_percentage,omitempty"`
@@ -36,7 +37,9 @@ func UsageWindowName(name string) bool {
 // WithFreshness returns an independent copy and derives display fields instead
 // of trusting a reporter's availability, staleness or explanation text.
 func (u AccountUsage) WithFreshness(now time.Time) AccountUsage {
-	u.Source = AccountUsageSource
+	if u.Source == "" {
+		u.Source = AccountUsageSource
+	}
 	u.Reason = ""
 	u.Stale = u.ObservedAt == 0 || now.Unix()-u.ObservedAt > 300
 	windows := make(map[string]UsageWindow, len(u.Windows))
@@ -63,7 +66,7 @@ func (u AccountUsage) WithFreshness(now time.Time) AccountUsage {
 }
 
 func (u AccountUsage) Validate(now time.Time) error {
-	if u.Source != AccountUsageSource || u.ObservedAt < 0 || u.ObservedAt > now.Unix()+300 || len(u.Windows) > 4 {
+	if (u.Source != AccountUsageSource && u.Source != AccountUsageCommandSource) || u.ObservedAt < 0 || u.ObservedAt > now.Unix()+300 || len(u.Windows) > 4 {
 		return Err("invalid_arguments", "invalid account usage source, timestamp or window count")
 	}
 	switch u.Status {

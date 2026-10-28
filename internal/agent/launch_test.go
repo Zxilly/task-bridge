@@ -96,6 +96,13 @@ func runLaunchTestHelper() error {
 		fmt.Fprintf(os.Stdout, `{"type":"rate_limit_event","session_id":%q,"rate_limit_info":{"status":"allowed","unifiedWindows":{"five_hour":{"utilization":0.24,"resetsAt":4102444800},"seven_day":{"utilization":0.13,"resetsAt":4102444800}}}}`+"\n", os.Args[3])
 		fmt.Fprintf(os.Stderr, `{"type":"rate_limit_event","session_id":%q,"rate_limit_info":{"status":"rejected","rateLimitType":"five_hour","utilization":1}}`+"\n", os.Args[3])
 		time.Sleep(30 * time.Second)
+	case "usage-query":
+		if err := os.WriteFile(os.Getenv("TASK_BRIDGE_LAUNCH_TEST_REPORT"), []byte(strings.Join(os.Args[1:], "\n")), 0600); err != nil {
+			return err
+		}
+		reset := time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano)
+		fmt.Fprintf(os.Stdout, `{"type":"assistant","usage_report":{"session":{"total_cost_usd":0,"total_api_duration_ms":0,"model_usage":{}},"rate_limits":{"limits":[{"kind":"session","group":"session","percent":24,"resets_at":%q,"is_active":true},{"kind":"weekly_all","group":"weekly","percent":38,"resets_at":%q,"is_active":false}]}}}`+"\n", reset, reset)
+		fmt.Fprintln(os.Stdout, `{"type":"result","is_error":false,"num_turns":0,"total_cost_usd":0}`)
 	case "tree":
 		child := exec.Command(os.Args[0])
 		child.Env = append(os.Environ(), "TASK_BRIDGE_LAUNCH_TEST_MODE=descendant")

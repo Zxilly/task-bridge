@@ -78,6 +78,7 @@ func setupWorker(t *testing.T) *workerFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	w.usageReader = nil
 	return &workerFixture{ctx: ctx, broker: b, peer: peer, worker: w}
 }
 

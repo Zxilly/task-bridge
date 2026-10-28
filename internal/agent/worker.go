@@ -19,9 +19,10 @@ import (
 )
 
 type Worker struct {
-	cfg      Config
-	log      *slog.Logger
-	launcher Launcher
+	cfg         Config
+	log         *slog.Logger
+	launcher    Launcher
+	usageReader usageReader
 }
 
 func New(cfg Config, logger *slog.Logger) (*Worker, error) {
@@ -36,7 +37,8 @@ func New(cfg Config, logger *slog.Logger) (*Worker, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Worker{cfg: cfg, log: logger, launcher: CommandLauncher{Path: cfg.ClaudePath, Model: cfg.Model, TokenEnv: cfg.TokenEnv}}, nil
+	launcher := CommandLauncher{Path: cfg.ClaudePath, Model: cfg.Model, TokenEnv: cfg.TokenEnv}
+	return &Worker{cfg: cfg, log: logger, launcher: launcher, usageReader: launcher}, nil
 }
 
 // Run stays available for B-side MCP requests. An unfinished Claude process
@@ -117,6 +119,15 @@ func (w *Worker) runConnection(ctx context.Context) (active, terminal bool, err 
 		tools = append(tools, tool)
 	}
 	w.log.Info("agent connected; tasks use separate Claude processes")
+	if w.usageReader != nil {
+		usageCtx, stopUsage := context.WithCancel(connectionCtx)
+		usageDone := make(chan struct{})
+		go func() {
+			defer close(usageDone)
+			w.refreshUsage(usageCtx, upstream, time.Minute)
+		}()
+		defer func() { stopUsage(); <-usageDone }()
+	}
 	for {
 		select {
 		case <-connectionCtx.Done():
@@ -362,7 +373,9 @@ func (w *Worker) runSession(ctx context.Context, upstream *mcp.ClientSession, to
 	launchErr := w.launcher.Launch(taskCtx, session)
 	stopUsage()
 	<-usageDone
-	w.publishUsage(ctx, upstream, usage.snapshot(time.Now()))
+	if snapshot := usage.snapshot(time.Now()); snapshot.Available {
+		w.publishUsage(ctx, upstream, snapshot)
+	}
 	cancel()
 	monitorErr := <-monitored
 	final, err := readTask(ctx, upstream, task.ID)

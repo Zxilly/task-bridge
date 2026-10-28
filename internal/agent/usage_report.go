@@ -3,6 +3,8 @@ package agent
 import (
 	"bytes"
 	"context"
+	"errors"
+	"path/filepath"
 	"time"
 
 	"github.com/Zxilly/task-bridge/internal/model"
@@ -21,8 +23,33 @@ func (w *Worker) reportUsage(ctx context.Context, upstream *mcp.ClientSession, u
 		}
 		snapshot := usage.snapshot(time.Now())
 		data := model.JSON(snapshot)
-		if !bytes.Equal(sent, data) && w.publishUsage(ctx, upstream, snapshot) {
+		if snapshot.Available && !bytes.Equal(sent, data) && w.publishUsage(ctx, upstream, snapshot) {
 			sent = data
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+// Refresh independently of task lifetimes. A new or reconnected controller can
+// report usable quota even if no model task has run on this connection.
+func (w *Worker) refreshUsage(ctx context.Context, upstream *mcp.ClientSession, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	warned := false
+	for ctx.Err() == nil {
+		readCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		usage, err := w.usageReader.ReadUsage(readCtx, filepath.Join(w.cfg.StateDir, "usage"))
+		cancel()
+		if err == nil {
+			w.publishUsage(ctx, upstream, usage)
+			warned = false
+		} else if !warned && ctx.Err() == nil {
+			w.log.Warn("could not refresh Claude account usage; keeping last observation", "error", err)
+			warned = true
 		}
 		select {
 		case <-ctx.Done():
@@ -40,7 +67,11 @@ func (w *Worker) publishUsage(ctx context.Context, upstream *mcp.ClientSession, 
 	defer cancel()
 	result, err := upstream.CallTool(callCtx, &mcp.CallToolParams{Name: "agent_usage_update", Arguments: model.AgentUsageUpdateArgs{Usage: usage}})
 	if err == nil {
-		_, err = decodeTool[model.AgentUsageAccepted](result)
+		var accepted model.AgentUsageAccepted
+		accepted, err = decodeTool[model.AgentUsageAccepted](result)
+		if err == nil && !accepted.Accepted {
+			err = errors.New("broker did not accept account usage report")
+		}
 	}
 	if err != nil && ctx.Err() == nil {
 		w.log.Warn("could not report Claude account usage", "error", err)

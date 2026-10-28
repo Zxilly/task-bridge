@@ -47,6 +47,11 @@ func (b *Broker) updateAgentUsage(ctx context.Context, p model.Principal, cid st
 	if slot == nil || slot.id != cid || slot.p.ID != p.ID {
 		return model.AgentUsageAccepted{}, model.Err("stale_connection", "current agent connection required")
 	}
+	// Local-command refreshes and task streams can arrive concurrently. A
+	// delayed task event must not roll the account snapshot back in time.
+	if args.Usage.ObservedAt < slot.usage.ObservedAt {
+		return model.AgentUsageAccepted{Accepted: true}, nil
+	}
 	slot.usage = args.Usage.WithFreshness(now)
 	slot.usageReceivedAt = now.Unix()
 	return model.AgentUsageAccepted{Accepted: true}, nil

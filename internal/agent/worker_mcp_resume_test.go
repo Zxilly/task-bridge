@@ -116,6 +116,7 @@ func setupWorkerMCPResume(t *testing.T) *workerMCPResumeFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	worker.usageReader = nil
 	f := &workerMCPResumeFixture{ctx: ctx, broker: b, worker: worker, host: host, workspace: workspace, journal: journal}
 	workerMCPTool[model.TaskListResult](t, f, "tasks_list", model.TaskListArgs{WorkspaceID: "workspace", Limit: 1})
 	return f
