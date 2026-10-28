@@ -115,7 +115,7 @@ bin/task-bridge-agent run --config agent.json
 
 自动记忆和普通 hooks 在子会话中关闭。用户及管理层的 Claude 规则仍可能适用；这些规则与前一个任务的聊天历史不同。该行为隔离任务上下文，不提供操作系统沙箱。参数、权限和恢复边界见 [运维步骤](docs/operations.md)。
 
-连接侧 B 可通过只读 `agents_usage` 工具，按 `workspace_id` 查询在线 A 最近上报的 Claude 账号额度，包括可用的 5 小时／每周已用百分比、重置时间和数据采集时间。A 控制器从子进程流式事件采集并自动上报；Claude 子会话无需参与。查询不会创建任务；没有数据时返回 unknown，超过 5 分钟或窗口已重置时标记 `stale`。字段支持及真实账号验收边界见 [账号额度协议](docs/protocol.md#连接侧账号额度)。
+连接侧 B 可通过只读 `agents_usage` 工具，按 `workspace_id` 查询在线 A 最近上报的 Claude 账号额度，包括可用的 5 小时／每周已用百分比、重置时间和数据采集时间。A 控制器连接后立即通过 Claude Code 的本地 `/usage` 命令刷新，此后每分钟刷新一次，空闲时也能更新；任务的流式额度事件也会补充数据。刷新不调用模型、不创建 broker 任务，Claude 任务子会话无需参与。首次刷新可能需要几秒；缺失数据表示 unknown，超过 5 分钟或窗口已重置时标记 `stale`。字段支持及真实账号验收边界见 [账号额度协议](docs/protocol.md#连接侧账号额度)。
 
 可选的手工交互 channel 模式仍使用 `examples/claude-mcp.json`，它在多个任务之间保留同一会话。启用前先停止同一 agent 身份的控制器；准入和启动步骤见 [兼容性记录](docs/compatibility.md)。新控制器的 headless 子进程不加载 development channel。
 

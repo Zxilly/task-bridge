@@ -10,7 +10,11 @@
 {"workspace_id":"demo","agent_id":"claude-demo"}
 ```
 
-最多一次返回 10 个 A，超出时返回 `result_too_large`，需用 `agent_id` 筛选；结果按 agent ID 排序。默认 A 控制器在子进程运行期间每秒检查额度快照，仅在变化或上次报告失败时调用 controller-only `agent_usage_update` 上报，子进程结束后再上报最后快照。该更新工具不转发到 Claude 子会话，Claude 的任务提示也不增加额度处理要求。
+最多一次返回 10 个 A，超出时返回 `result_too_large`，需用 `agent_id` 筛选；结果按 agent ID 排序。默认 A 控制器连接后立即运行 Claude Code 的本地 `/usage` 命令，此后每分钟刷新并调用 controller-only `agent_usage_update` 上报，空闲时也会刷新。初次刷新可能需要几秒。刷新使用独立工作目录、空 MCP 配置和禁用的本地工具／普通 hooks，不创建任务或模型回合；不保存该查询的 transcript。单次查询上限 20 秒，控制器关闭或断线时会停止查询进程树。
+
+`/usage` 路径不能带 `--disable-slash-commands`：该参数会使 print 模式返回命令不可用。任务子会话仍使用原有禁用参数。额度刷新读取 assistant 消息上的结构化 `usage_report.rate_limits.limits`，不解析本地化显示文本，并校验结果为 `num_turns: 0`、费用为零且没有模型调用。CLI 版本或登录不支持该结构时保留已有快照并记录刷新失败；不会把空报告或失败标记成新的可用数据。[官方 SDKUsageReport](https://code.claude.com/docs/en/agent-sdk/typescript#sdkusagereport)。
+
+任务子进程运行时仍每秒检查其流式额度快照，仅在有数据且发生变化或上次报告失败时上报，结束后再上报最后有效快照。尚无事件的任务不会覆盖控制器已知的额度。该更新工具不转发到 Claude 子会话，Claude 的任务提示也不增加额度处理要求。
 
 控制器使用 `--output-format stream-json --verbose`，仅从当前 Claude session 的 stdout `rate_limit_event` 采集快照。`rate_limit_info` 的已文档化单窗口字段包括 `rateLimitType`、`utilization` 和 `resetsAt`；同时兼容观测到的 `unifiedWindows` 多窗口字段。后者尚无完整 SDK 契约，缺失时不能保证同时获得两个窗口。[官方 RateLimitInfo](https://code.claude.com/docs/en/agent-sdk/python#ratelimitinfo)、[上游多窗口字段记录](https://github.com/anthropics/claude-code/issues/91857)。
 
@@ -24,7 +28,7 @@
     "received_at": 1793000001,
     "usage": {
       "available": true,
-      "source": "claude_code_rate_limit_event",
+      "source": "claude_code_usage_command",
       "status": "allowed",
       "observed_at": 1793000000,
       "stale": false,
@@ -47,11 +51,11 @@
 }
 ```
 
-所有 `observed_at`、`received_at` 和 `resets_at` 均为 UTC Unix **秒**。`observed_at` 是 A 采集时间，`received_at` 是 broker 接收时间，尚无报告时省略后者。`used_percentage` 从 CLI 的 0–1 利用率换算为 0–100；模型专项窗口 `seven_day_opus`、`seven_day_sonnet` 在 CLI 上报时也会保留。`status` 是最后一个合法事件的 `allowed`、`allowed_warning` 或 `rejected`，不是查询时重新请求账号得到的状态。
+所有 `observed_at`、`received_at` 和 `resets_at` 均为 UTC Unix **秒**。`observed_at` 是 A 采集时间，`received_at` 是 broker 接收时间，尚无报告时省略后者。`source` 为 `claude_code_usage_command` 或 `claude_code_rate_limit_event`。命令来源直接使用 `percent`，事件来源从 CLI 的 0–1 利用率换算为 0–100；模型专项窗口 `seven_day_opus`、`seven_day_sonnet` 在 CLI 上报时也会保留。命令报告中的 `session` 对应 `five_hour`、`weekly_all` 对应 `seven_day`；`is_active: false` 表示当前并非主要限制窗口，不代表数据无效。`status` 为最近快照的 `allowed`、`allowed_warning` 或 `rejected`，B 查询时不额外请求账号。
 
 `available` 表示至少收到一个窗口，并不保证两个窗口齐全或字段完整。缺失的窗口、百分比或重置时间均表示 unknown；有效的零百分比会明确保留。尚无窗口时返回 `available: false`、`windows: {}` 和 `reason`。每个窗口保留各自采集时间；超过 300 秒或到达其重置时间时 `stale: true`。根级 `stale` 在尚无窗口、最后事件超过 300 秒或任一窗口过期时为 true；过期值保留供核对，不推算新窗口为零。
 
-快照保存在 A 和 broker 内存中，任务结束后仍可通过在线 A 的最后快照查询；A 断线后不再列出，重连或 broker 重启后从 unknown 开始。每次新子进程启动（含恢复）也重新采集并上报，不从 transcript 或其他会话复用。更新只接受当前 A 的认证连接，旧连接不能覆盖新连接的快照。该工具不读取 Claude 凭据、不额外请求账号 API，也不为查询启动模型回合。数据随 Claude 自身事件刷新，无法保证空闲时实时更新；首次响应前、API key 登录、手工 channel 模式或 CLI 不提供字段时可能始终没有数据。缺失或过期时不能据此推断剩余额度。broker 查询时重新计算过期标记，不把较新的接收时间当作较新的采集时间。
+快照保存在 A 和 broker 内存中，任务结束后仍持续刷新；A 断线后不再列出，重连或 broker 重启后从 unknown 开始并立即重新刷新。任务（含恢复）各自重新采集流式事件，不从 transcript 读取额度，也不会清空控制器已知的账号快照。更新只接受当前 A 的认证连接，旧连接不能覆盖新连接的快照。桥本身不读取 Claude 登录凭据；本地 `/usage` 由 Claude 使用现有登录查询账号，不调用模型。API key 登录、手工 channel 模式或 CLI 不支持结构化报告时，可能只在任务产生额度事件后获得数据。缺失或过期时不能据此推断剩余额度。broker 查询时重新计算过期标记，不把较新的接收时间当作较新的采集时间。
 
 ## A：WebSocket MCP
 

@@ -78,7 +78,7 @@ bin/task-bridge-agent run --config agent.json
 
 每个新任务使用不同的 session UUID 和工作目录，首次以 `--session-id` 启动 Claude。显式恢复同一任务时，使用保存的 UUID、原工作目录与 `--resume`；每次启动都生成新的本机 relay 凭据和配置，不使用 `--continue` 或 `--fork-session`。子会话禁用本地执行和文件工具，只加载本次 relay 的 MCP 配置。`task_progress` 与 `task_complete` 仍是回传进度和结果的接口，Claude 的 stdout 或退出码不替代 broker 里的最终结果。
 
-启动器以 `--output-format stream-json --verbose` 读取 Claude 的账号额度事件，A 控制器自动上报给 broker；连接侧 B 用 `agents_usage` 查询，例如 `{"workspace_id":"demo"}`，也可增加 `agent_id` 筛选。Claude 子会话无需处理额度。无需新增配置，需更新 server、A 和 B 二进制，并让 MCP 宿主重新发现 B 的工具。查询只读取 broker 内存，不创建任务，也不能强制刷新账号额度。任务结束后可查询在线 A 的最后快照；A 断线后不列出，重连、broker 重启或新任务启动后重新采集。缺失数据、超过 5 分钟或已到重置时间的窗口均不能当作当前剩余额度。字段、时间单位和 CLI 支持边界见 [账号额度协议](protocol.md#连接侧账号额度)。
+连接侧 B 用 `agents_usage` 查询账号额度，例如 `{"workspace_id":"demo"}`，也可增加 `agent_id` 筛选。A 连接后立即通过独立的 Claude `/usage` 命令刷新，此后每分钟刷新一次，任务流式事件也会补充数据；Claude 任务子会话无需处理额度。无需新增配置，需更新 server、A 和 B 二进制，并让 MCP 宿主重新发现 B 的工具。B 查询只读取 broker 内存，不创建任务或模型回合；控制器的本地命令使用现有登录查询账号。A 断线后不列出，重连或 broker 重启后立即重新刷新；初次刷新可能需要几秒。检查可用数据时，应覆盖无任务的空闲 A、重连后和超过 5 分钟后的查询。缺失数据、超过 5 分钟或已到重置时间的窗口均不能当作当前剩余额度。字段、时间单位和 CLI 支持边界见 [账号额度协议](protocol.md#连接侧账号额度)。
 
 子进程设置 `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`，并通过会话设置关闭 auto memory 和普通 hooks，避免跨任务自动记忆。managed hooks 只能由 managed 设置关闭；用户或 managed CLAUDE 规则仍可能进入上下文。auto memory 与会话 transcript 分开：transcript 保持启用，以便恢复同一任务。启动器清除继承的 transcript 禁写变量，并关闭 `CLAUDE_CODE_RESUME_INTERRUPTED_TURN`，让恢复使用本次明确的提示。工作目录约束不构成操作系统沙箱。官方说明见 [会话恢复](https://code.claude.com/docs/en/sessions#what-a-resumed-session-restores)、[autoMemoryEnabled](https://code.claude.com/docs/en/settings-reference#automemoryenabled) 与 [disableAllHooks](https://code.claude.com/docs/en/settings-reference#disableallhooks)。
 
