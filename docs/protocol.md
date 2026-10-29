@@ -98,6 +98,7 @@ channel 示例：
 | `task_get` | `task_id` | 返回任务与最近命令快照 |
 | `task_resume` | `task_id` | 控制器提供 `resume_request_id` 领取 B 的恢复请求；兼容手工 MCP 提供 `previous_assignment_id`，有 pending 请求时禁止绕过。两种 ID 必须严格二选一，均最多 128 字节 |
 | `task_resume_failed` | `task_id, resume_request_id, error_code, message` | 仅供控制器记录恢复失败，返回 TaskResumeResult；error_code 最多 64 字节、message 最多 1024 UTF-8 字节，不向子会话 relay 暴露 |
+| `task_interrupt` | `task_id, assignment_id, error_code, message` | 仅供控制器在子进程已停止、本机 relay 已关闭后撤销当前分派；保持上游连接，任务进入 interrupted、lease 清零。公开错误写入 `task.error` 和 `task.interrupted` 事件；error_code 最多 64 字节且仅小写字母／数字／下划线，message 最多 1024 UTF-8 字节；相同报告可重试，不上传 CLI 原始输出，不向子会话暴露 |
 | `bash` | `task_id, assignment_id, operation_key, command` | `cwd, timeout_ms, wait_ms`；命令固定在该任务的 B 工作区执行 |
 | `command_get` | `task_id, command_id` | 返回命令元数据及首段输出 |
 | `command_wait` | `task_id, command_id` | `wait_ms`；有界等待，任务执行期限不变 |
@@ -107,6 +108,8 @@ channel 示例：
 | `task_complete` | `task_id, assignment_id, outcome, summary` | `result`；outcome 为 succeeded 或 failed |
 
 A 的执行、进度与完成请求都要求当前连接和有效 assignment。历史查询不延续旧执行授权。不能仅凭“当前任务”推断请求属于哪个任务。
+
+`task_interrupt` 保留会话和既有命令记录，不把进行中的命令改写为完成或 unknown，也不会重试任务。恢复仍要求 B 显式请求并完成既有命令核对；领取新 assignment 时清除上次 `task.error`。CLI 的认证拒绝、账号限流和服务端错误分别映射为 `claude_authentication_failed`、`claude_rate_limited` 和 `claude_api_unavailable`；其他异常使用固定公开诊断，详细输出只留在 A 日志。
 
 恢复通知在 `meta` 中增加可选字符串 `resume_request_id`。尚无 assignment 的旧 queued 任务可带空 `assignment_id` 和非空请求 ID，实际 assignment 在领取请求时签发。默认控制器只在收到匹配的持久恢复请求后读取本地 Claude session 映射，通过 `task_resume` 原子领取请求，再使用原 Claude UUID、原 cwd 和本次新 relay 配置恢复对话。无请求 ID 的 interrupted 通知不会启动 Claude。unknown 命令、未完成的 reconcile 或工作区隔离仍阻止恢复；缺失映射或 transcript 时上报 `task_resume_failed`，不创建新会话兜底。该工具记录请求失败，不提交任务终态；诊断使用受限的公开错误信息，不上传 CLI 原始日志。
 

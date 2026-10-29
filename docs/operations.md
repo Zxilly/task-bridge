@@ -86,7 +86,7 @@ bin/task-bridge-agent run --config agent.json
 
 ### 恢复一个已保存的任务
 
-子进程未完成任务便退出或处理任务时连接中断，控制器会断开旧上游连接，再自动重连等待显式请求。没有 `resume_request_id` 的 interrupted 通知只用于保持待恢复状态，不会启动 Claude。保留原 `agent.json`、`state_dir` 和 Claude profile，让同一 A 身份的控制器保持 `run` 在线。先检查原 task/command、B journal 与进程证据，再由最初提交任务的 B 凭据通过 MCP 调用 `tasks_resume`：
+子进程未完成任务便退出时，控制器先关闭本机 relay，再通过 `task_interrupt` 撤销当前分派权限并保持连接；真正的上游断线仍会重连。没有 `resume_request_id` 的 interrupted 通知不会启动 Claude。通过 `tasks_get` 检查 `task.error`：`claude_authentication_failed` 表示认证被拒绝（如 HTTP 403），应核对 A 登录和实际网络出口；`claude_rate_limited` 表示账号额度耗尽，应检查 `agents_usage` 和重置时间；其他进程异常的原始日志保留在 A。旧服务端不支持 `task_interrupt` 时，A 先保存公开诊断到 progress，再断开重连以撤销权限。保留原 `agent.json`、`state_dir` 和 Claude profile，让同一 A 身份的控制器保持 `run` 在线。先检查原 task/command、B journal 与进程证据，再由最初提交任务的 B 凭据通过 MCP 调用 `tasks_resume`：
 
 ```json
 {

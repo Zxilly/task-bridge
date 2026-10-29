@@ -128,7 +128,7 @@ B 工具包括 `tasks_submit`、`tasks_run`、`tasks_get`、`tasks_wait`、`task
 ## 行为边界
 
 - 一台服务端进程配合本地 SQLite；一个 A 身份固定工作区，工作区串行处理任务，默认每个任务使用不同 Claude 会话。
-- A 子进程未提交最终结果便退出时，控制器保留原会话映射和工作目录，断开旧连接后自动重连并等待 B 的 `tasks_resume`。重连及旧 interrupted 通知不会自动重跑任务；每个恢复请求最多领取一次。
+- A 子进程未提交最终结果便退出时，控制器保留原会话映射和工作目录，上报 `task_interrupt` 撤销当前分派权限并保持连接。B 可查询 `task.error` 区分认证失败、额度耗尽等原因，再显式调用 `tasks_resume`。旧 interrupted 通知不会自动重跑任务；每个恢复请求最多领取一次。旧服务端不支持该工具时，A 保存公开诊断到 progress 后通过断开重连撤销权限。
 - 等待请求结束或断线不等于任务结束。使用返回的 `task_id`、`command_id` 查询已保存的状态。
 - 相同逻辑命令重试复用 `operation_key`。结果不明时先查询；更换 key 无法避免重复副作用。
 - 无法确认是否启动或是否完成的命令进入 `unknown`，需要核对。任意 Bash 副作用不具备 exactly-once 保证。
