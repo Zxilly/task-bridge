@@ -236,10 +236,10 @@ func TestOfficialSDKClientListsValidatesAndRoutesTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(list.Tools) != 12 {
+	if len(list.Tools) != 13 {
 		t.Fatalf("tool count=%d", len(list.Tools))
 	}
-	want := map[string]bool{"agent_usage_update": true, "task_accept": true, "task_get": true, "task_resume": true, "task_resume_failed": true, "bash": true, "command_get": true, "command_wait": true, "command_output": true, "command_cancel": true, "task_progress": true, "task_complete": true}
+	want := map[string]bool{"agent_usage_update": true, "task_accept": true, "task_get": true, "task_resume": true, "task_resume_failed": true, "task_interrupt": true, "bash": true, "command_get": true, "command_wait": true, "command_output": true, "command_cancel": true, "task_progress": true, "task_complete": true}
 	for _, tool := range list.Tools {
 		if !want[tool.Name] {
 			t.Fatalf("unexpected tool %q", tool.Name)

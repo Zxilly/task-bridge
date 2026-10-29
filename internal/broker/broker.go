@@ -681,6 +681,7 @@ func (b *Broker) CallAgent(ctx context.Context, p model.Principal, cid, method s
 			t.LeaseEpoch++
 			t.LeaseUntil = model.Now() + 60000
 			t.State = "running"
+			t.Error = nil
 			if e = tx.SaveTask(t); e != nil {
 				return e
 			}
@@ -689,6 +690,12 @@ func (b *Broker) CallAgent(ctx context.Context, p model.Principal, cid, method s
 		case "task_resume_failed":
 			out, e = b.reportTaskResumeFailure(tx, &t, p, cid, a)
 			return e
+		case "task_interrupt":
+			if e = b.interruptTask(tx, &t, p, cid, a); e != nil {
+				return e
+			}
+			out = t
+			return nil
 		case "bash":
 			if e = b.authorized(t, p, cid, a.AssignmentID); e != nil {
 				return e
@@ -780,6 +787,7 @@ func (b *Broker) CallAgent(ctx context.Context, p model.Principal, cid, method s
 				}
 			}
 			t.State = a.Outcome
+			t.Error = nil
 			t.Summary = a.Summary
 			t.Result = canonicalResult(a.Result)
 			if e = tx.SaveTask(t); e != nil {

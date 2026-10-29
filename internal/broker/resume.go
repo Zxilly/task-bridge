@@ -150,6 +150,7 @@ func (b *Broker) claimTaskResume(tx *storage.Tx, task *model.Task, p model.Princ
 	task.LeaseEpoch++
 	task.LeaseUntil = now + 60000
 	task.State = "running"
+	task.Error = nil
 	request.State = "accepted"
 	request.AssignmentID = task.AssignmentID
 	request.ConnectionID = cid

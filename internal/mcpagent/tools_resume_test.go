@@ -43,6 +43,9 @@ func TestOfficialSDKResumeToolsValidateAndRoute(t *testing.T) {
 		args         map[string]any
 		valid        bool
 	}{
+		{"interruption report", "task_interrupt", map[string]any{"task_id": "task", "assignment_id": "assignment", "error_code": "claude_rate_limited", "message": "Claude reached an account limit."}, true},
+		{"interruption missing assignment", "task_interrupt", map[string]any{"task_id": "task", "error_code": "claude_rate_limited", "message": "Claude reached an account limit."}, false},
+		{"interruption long diagnostic", "task_interrupt", map[string]any{"task_id": "task", "assignment_id": "assignment", "error_code": "claude_rate_limited", "message": strings.Repeat("x", 1025)}, false},
 		{"request claim", "task_resume", map[string]any{"task_id": "task", "resume_request_id": "request"}, true},
 		{"manual recovery", "task_resume", map[string]any{"task_id": "task", "previous_assignment_id": "assignment"}, true},
 		// The broker owns the cross-field requirement; the schema permits either form.

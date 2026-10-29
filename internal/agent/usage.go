@@ -92,6 +92,7 @@ func (u *accountUsage) snapshot(now time.Time) usageSnapshot {
 type usageStream struct {
 	diagnostic *launchDiagnostic
 	usage      *accountUsage
+	outcome    *launchOutcome
 	sessionID  string
 	line       []byte
 	skipping   bool
@@ -102,6 +103,7 @@ const maxUsageEventBytes = 1 << 20
 func (s *usageStream) finish() {
 	if !s.skipping && len(s.line) > 0 {
 		s.usage.observe(s.line, s.sessionID, time.Now())
+		s.outcome.observe(s.line, s.sessionID)
 	}
 	s.line = nil
 }
@@ -128,6 +130,7 @@ func (s *usageStream) Write(data []byte) (int, error) {
 		}
 		if !s.skipping {
 			s.usage.observe(s.line, s.sessionID, time.Now())
+			s.outcome.observe(s.line, s.sessionID)
 		}
 		s.line = s.line[:0]
 		s.skipping = false

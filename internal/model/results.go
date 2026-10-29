@@ -120,6 +120,11 @@ type TaskCompletedPayload struct {
 	State   string `json:"state"`
 	Summary string `json:"summary"`
 }
+
+type TaskInterruptedPayload struct {
+	State string `json:"state"`
+	Error *Error `json:"error"`
+}
 type TaskCancelRequestedPayload struct {
 	Reason string `json:"reason"`
 	State  string `json:"state"`

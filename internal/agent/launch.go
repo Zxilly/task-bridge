@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -81,7 +82,8 @@ func (l CommandLauncher) Launch(ctx context.Context, session Session) error {
 	cmd.Env = l.environment(session.Token, session.Effort)
 	cmd.Stdin = strings.NewReader(session.Prompt)
 	output := &launchDiagnostic{}
-	stream := &usageStream{diagnostic: &launchDiagnostic{}, usage: session.Usage, sessionID: session.ID}
+	outcome := &launchOutcome{}
+	stream := &usageStream{diagnostic: &launchDiagnostic{}, usage: session.Usage, sessionID: session.ID, outcome: outcome}
 	defer stream.finish()
 	cmd.Stdout, cmd.Stderr = stream, output
 	cmd.WaitDelay = 3 * time.Second
@@ -111,6 +113,10 @@ func (l CommandLauncher) Launch(ctx context.Context, session Session) error {
 		<-done
 		return ctx.Err()
 	}
+	stream.finish()
+	if err == nil && outcome.failure != nil {
+		err = errors.New("Claude reported an unsuccessful result")
+	}
 	if err != nil {
 		// Verbose stdout can fill its buffer before a later stderr failure.
 		// Preserve stderr first, while still including stdout-only CLI errors.
@@ -126,9 +132,14 @@ func (l CommandLauncher) Launch(ctx context.Context, session Session) error {
 			diagnostic = diagnostic[:maxLaunchDiagnosticBytes] + "\n[output truncated]"
 		}
 		if diagnostic != "" {
-			return fmt.Errorf("Claude process: %w: %s", err, diagnostic)
+			err = fmt.Errorf("Claude process: %w: %s", err, diagnostic)
+		} else {
+			err = fmt.Errorf("Claude process: %w", err)
 		}
-		return fmt.Errorf("Claude process: %w", err)
+		if outcome.failure != nil {
+			return &launchFailure{public: *outcome.failure, cause: err}
+		}
+		return err
 	}
 	return nil
 }

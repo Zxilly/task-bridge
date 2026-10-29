@@ -90,6 +90,17 @@ func runLaunchTestHelper() error {
 		fmt.Fprintln(os.Stderr, "controlled CLI failure", os.Getenv(TaskTokenEnv))
 		fmt.Fprint(os.Stderr, strings.Repeat("x", 64<<10))
 		os.Exit(17)
+	case "auth-error", "rate-error":
+		// Reproduce a CLI failure after verbose stdout has filled the ordinary
+		// diagnostic buffer. The structured error must still reach B safely.
+		fmt.Fprintln(os.Stdout, strings.Repeat("x", 32<<10))
+		kind, status := "authentication_failed", 403
+		if os.Getenv("TASK_BRIDGE_LAUNCH_TEST_MODE") == "rate-error" {
+			kind, status = "rate_limit", 429
+		}
+		fmt.Fprintf(os.Stdout, `{"type":"assistant","session_id":%q,"is_api_error_message":true,"error":%q,"api_error_status":%d,"message":{"content":[{"type":"text","text":"private diagnostic %s"}]}}`+"\n", os.Args[3], kind, status, os.Getenv(TaskTokenEnv))
+		fmt.Fprintf(os.Stdout, `{"type":"result","session_id":%q,"is_error":true,"api_error_status":%d,"result":"private result %s"}`, os.Args[3], status, os.Getenv(TaskTokenEnv))
+		os.Exit(1)
 	case "usage":
 		// Emit enough ordinary output to fill the failure diagnostic buffer.
 		fmt.Fprintln(os.Stdout, strings.Repeat("x", 32<<10))

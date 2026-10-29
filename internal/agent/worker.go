@@ -41,8 +41,8 @@ func New(cfg Config, logger *slog.Logger) (*Worker, error) {
 	return &Worker{cfg: cfg, log: logger, launcher: launcher, usageReader: launcher}, nil
 }
 
-// Run stays available for B-side MCP requests. An unfinished Claude process
-// closes its upstream connection, fences execution, then reconnects while idle.
+// Run stays available for B-side MCP requests. A stopped Claude process fences
+// only its task assignment when the broker supports task_interrupt.
 func (w *Worker) Run(ctx context.Context) error {
 	if err := os.MkdirAll(w.cfg.StateDir, 0700); err != nil {
 		return err
@@ -378,6 +378,11 @@ func (w *Worker) runSession(ctx context.Context, upstream *mcp.ClientSession, to
 	}
 	cancel()
 	monitorErr := <-monitored
+	// Revoke and join task-facing handlers before fencing the assignment, so
+	// no delayed subprocess call can create new work after this report.
+	if err := relay.Close(); err != nil {
+		return fmt.Errorf("close task %s relay: %w", task.ID, err)
+	}
 	final, err := readTask(ctx, upstream, task.ID)
 	if err == nil && final.Task.Terminal() {
 		if err := store.Remove(saved); err != nil {
@@ -389,13 +394,35 @@ func (w *Worker) runSession(ctx context.Context, upstream *mcp.ClientSession, to
 	if err != nil {
 		return fmt.Errorf("task %s lost its broker connection: %w", task.ID, err)
 	}
-	if monitorErr != nil {
+	if monitorErr != nil && !errors.Is(monitorErr, context.Canceled) {
 		return fmt.Errorf("task %s stopped: %w", task.ID, monitorErr)
 	}
-	if launchErr != nil {
-		return fmt.Errorf("task %s interrupted before a durable result: %w", task.ID, launchErr)
+	if launchErr == nil {
+		launchErr = fmt.Errorf("Claude exited without task_complete for task %s; execution requires review", task.ID)
 	}
-	return fmt.Errorf("Claude exited without task_complete for task %s; execution requires review", task.ID)
+	public := publicSessionFailure(launchErr)
+	for _, tool := range tools {
+		if tool.Name != "task_interrupt" {
+			continue
+		}
+		reportCtx, reportCancel := context.WithTimeout(ctx, 5*time.Second)
+		result, reportErr := upstream.CallTool(reportCtx, &mcp.CallToolParams{Name: "task_interrupt", Arguments: map[string]any{"task_id": task.ID, "assignment_id": task.AssignmentID, "error_code": public.Code, "message": public.Message}})
+		reportCancel()
+		if reportErr == nil {
+			_, reportErr = decodeTool[model.Task](result)
+		}
+		if reportErr != nil {
+			return fmt.Errorf("persist task %s interruption: %w (Claude: %v)", task.ID, reportErr, launchErr)
+		}
+		w.log.Warn("Claude session interrupted; controller remains connected", "task_id", task.ID, "error_code", public.Code, "error", launchErr)
+		return nil
+	}
+	// Old brokers still need a disconnect to revoke the task's lease. Publish
+	// a safe progress message first instead of losing the process diagnosis.
+	progressCtx, progressCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer progressCancel()
+	_, _ = upstream.CallTool(progressCtx, &mcp.CallToolParams{Name: "task_progress", Arguments: map[string]any{"task_id": task.ID, "assignment_id": task.AssignmentID, "message": public.Code + ": " + public.Message}})
+	return fmt.Errorf("task %s interrupted before a durable result: %w", task.ID, launchErr)
 }
 
 func monitorTask(ctx context.Context, cancel context.CancelFunc, upstream *mcp.ClientSession, scope model.ChannelMetadata) error {

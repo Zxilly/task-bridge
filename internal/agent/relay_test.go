@@ -24,7 +24,7 @@ func relayTestOffer(task, assignment string) model.ChannelNotification {
 func relayTestUpstream(t *testing.T, handler mcp.ToolHandler) (*mcp.ClientSession, []*mcp.Tool) {
 	t.Helper()
 	server := mcp.NewServer(&mcp.Implementation{Name: "relay-upstream", Version: "1"}, nil)
-	for _, name := range []string{"agent_usage_update", "task_accept", "task_get", "task_resume", "bash", "command_get", "command_wait", "command_output", "command_cancel", "task_progress", "task_complete", "unrelated"} {
+	for _, name := range []string{"agent_usage_update", "task_interrupt", "task_accept", "task_get", "task_resume", "bash", "command_get", "command_wait", "command_output", "command_cancel", "task_progress", "task_complete", "unrelated"} {
 		server.AddTool(&mcp.Tool{Name: name, InputSchema: map[string]any{"type": "object"}}, handler)
 	}
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
@@ -122,7 +122,7 @@ func TestRelayScopesEveryToolAndPreservesRawArguments(t *testing.T) {
 		t.Fatalf("task tool list: count=%d err=%v", len(list.Tools), err)
 	}
 	for _, tool := range list.Tools {
-		if tool.Name == "agent_usage_update" || tool.Name == "task_resume" || tool.Name == "unrelated" {
+		if tool.Name == "agent_usage_update" || tool.Name == "task_interrupt" || tool.Name == "task_resume" || tool.Name == "unrelated" {
 			t.Fatalf("unscoped tool exposed: %s", tool.Name)
 		}
 		result, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: tool.Name, Arguments: json.RawMessage(`{"task_id":"other-task"}`)})
@@ -147,7 +147,7 @@ func TestRelayScopesEveryToolAndPreservesRawArguments(t *testing.T) {
 		}
 		relayTestError(t, result, "invalid_arguments")
 	}
-	for _, name := range []string{"agent_usage_update", "task_resume", "unrelated"} {
+	for _, name := range []string{"agent_usage_update", "task_interrupt", "task_resume", "unrelated"} {
 		_, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: name, Arguments: json.RawMessage(`{"task_id":"task-one"}`)})
 		var protocolError *jsonrpc.Error
 		if !errors.As(err, &protocolError) || protocolError.Code != jsonrpc.CodeInvalidParams {

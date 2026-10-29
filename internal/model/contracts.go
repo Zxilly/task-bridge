@@ -56,6 +56,7 @@ func (AssignmentPayload) eventPayload()          {}
 func (CommandIDPayload) eventPayload()           {}
 func (TaskProgressPayload) eventPayload()        {}
 func (TaskCompletedPayload) eventPayload()       {}
+func (TaskInterruptedPayload) eventPayload()     {}
 func (TaskCancelRequestedPayload) eventPayload() {}
 func (CommandStatePayload) eventPayload()        {}
 
