@@ -84,6 +84,12 @@ bin/task-bridge-agent run --config agent.json
 
 `state_dir/sessions/` 保存任务与 Claude UUID 的映射和工作目录，不保存 Claude 登录凭据；MCP 配置每次启动时重建，进程结束后移除。未完成任务在进程退出后保留映射和工作目录；broker 确认终态后，控制器仅清理自己持有的任务目录。Claude 的 transcript 仍由 Claude 管理，默认位于 `~/.claude/projects/`，Windows 为 `%USERPROFILE%\.claude\projects\`，设置 `CLAUDE_CONFIG_DIR` 时使用对应位置。恢复时保留原系统账号与 Claude 配置目录。transcript 包含对话和工具结果，默认受 Claude 的 30 天保留期影响；本程序不会删除或复制用户 profile 中的 transcript。[Claude 会话存储说明](https://code.claude.com/docs/en/sessions#where-transcripts-are-stored)
 
+### 连接中断后的自动恢复
+
+A 的 `auto_resume` 默认开启；设置为 `false` 可保留断连后人工恢复的行为。先更新 broker，再更新 A。A 在认证连接上调用仅供控制器的 `agent_recovery_configure`，broker 将开关保存在已接受的 task 上。运行中的任务因 A 断连或 broker 常规重启进入 interrupted 时，会创建带 `automatic: true` 的持久恢复请求；A 重连后领取新 assignment，以原 UUID、原目录和新 relay 凭据继续。
+
+自动恢复等待 B 在线及所有既有命令的明确终态，不重放进行中或 unknown 命令；工作区隔离、缺失会话、原 deadline 到期及凭据吊销仍会阻止执行。Claude 鉴权失败、限流或其他子进程错误通过 task_interrupt 留下诊断，不自动重试。恢复不延长原 deadline。A 和 broker 每 30 秒进行 MCP 保活，连续两次失败关闭连接并触发重连；broker 日志保存 agent_id、connection_id、连接错误及 SDK 保活失败。
+
 ### 恢复一个已保存的任务
 
 子进程未完成任务便退出时，控制器先关闭本机 relay，再通过 `task_interrupt` 撤销当前分派权限并保持连接；真正的上游断线仍会重连。没有 `resume_request_id` 的 interrupted 通知不会启动 Claude。通过 `tasks_get` 检查 `task.error`：`claude_authentication_failed` 表示认证被拒绝（如 HTTP 403），应核对 A 登录和实际网络出口；`claude_rate_limited` 表示账号额度耗尽，应检查 `agents_usage` 和重置时间；其他进程异常的原始日志保留在 A。旧服务端不支持 `task_interrupt` 时，A 先保存公开诊断到 progress，再断开重连以撤销权限。保留原 `agent.json`、`state_dir` 和 Claude profile，让同一 A 身份的控制器保持 `run` 在线。先检查原 task/command、B journal 与进程证据，再由最初提交任务的 B 凭据通过 MCP 调用 `tasks_resume`：

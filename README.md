@@ -1,6 +1,6 @@
 # Task Bridge
 
-用 Go 实现的自托管任务桥。A 端控制器连接远程 WebSocket MCP，为每个新任务启动一个独立 Claude Code 会话，并支持显式恢复同一任务的原会话；B 以 stdio MCP 客户端接入其他宿主，并在本机指定工作区执行 Claude 发出的 Bash 命令。服务端保存任务、命令、输出及恢复信息。
+用 Go 实现的自托管任务桥。A 端控制器连接远程 WebSocket MCP，为每个新任务启动一个独立 Claude Code 会话，并支持断连后自动恢复同一任务的原会话；B 以 stdio MCP 客户端接入其他宿主，并在本机指定工作区执行 Claude 发出的 Bash 命令。服务端保存任务、命令、输出及恢复信息。
 
 源码仓库：[Zxilly/task-bridge](https://github.com/Zxilly/task-bridge)。
 
@@ -112,6 +112,8 @@ bin/task-bridge-agent run --config agent.json
 ```
 
 工具返回原 `task_id` 和持久化的 `resume_request`。A 消费该显式请求后，使用原 Claude session UUID 和工作目录、新 assignment 及 relay 凭据恢复会话。`pending` 表示等待 A，`accepted` 表示请求已被领取；任务结果仍通过同一 ID 的 `tasks_get` / `tasks_wait` 查询。响应不明时复用同一个 key；本次恢复失败后核对原因，再用新 key 请求另一次尝试。unknown、reconcile 与隔离检查保持有效，缺失会话映射或 transcript 时不创建新会话。完整步骤见 [运维文档](docs/operations.md#恢复一个已保存的任务)。
+
+A 默认在连接中断后自动恢复原会话；恢复会等待已有命令结果并更新 assignment，不延长任务期限。Claude 自身报错仍需显式恢复。可在 A 配置中设置 `auto_resume: false` 关闭自动恢复。
 
 自动记忆和普通 hooks 在子会话中关闭。用户及管理层的 Claude 规则仍可能适用；这些规则与前一个任务的聊天历史不同。该行为隔离任务上下文，不提供操作系统沙箱。参数、权限和恢复边界见 [运维步骤](docs/operations.md)。
 
