@@ -74,7 +74,7 @@ func setupWorker(t *testing.T) *workerFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w, err := New(Config{ServerURL: "ws" + strings.TrimPrefix(server.URL, "http") + "/mcp/agent", TokenFile: tokenFile, ClaudePath: executable, StateDir: filepath.Join(directory, "agent-state")}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	w, err := New(Config{MaxConcurrentTasks: 1, ServerURL: "ws" + strings.TrimPrefix(server.URL, "http") + "/mcp/agent", TokenFile: tokenFile, ClaudePath: executable, StateDir: filepath.Join(directory, "agent-state")}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -302,7 +302,11 @@ func TestWorkerStopsChildWhenAssignmentChanges(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("old child survived the changed task assignment")
 	}
-	waitWorkerTask(t, f, task.ID, "interrupted")
+	// Revoking the old assignment must not disconnect and fence a newer one.
+	current := waitWorkerTask(t, f, task.ID, "running")
+	if current.AssignmentID == original.Task.AssignmentID {
+		t.Fatal("replacement assignment was lost")
+	}
 	run.requireAlive(t)
 	select {
 	case <-sessions:

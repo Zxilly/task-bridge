@@ -18,35 +18,7 @@ import (
 // Recovery must preserve Claude context and execute an operation only once.
 func TestWorkerAutomaticallyResumesAfterRepeatedConnectionLoss(t *testing.T) {
 	f := setupWorkerMCPResume(t)
-	u, err := url.Parse(f.worker.cfg.ServerURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	listener, err := net.Listen("tcp4", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = listener.Close() })
-	sockets := make(chan net.Conn, 8)
-	upstreamAddress := u.Host
-	go func() {
-		for {
-			in, err := listener.Accept()
-			if err != nil {
-				return
-			}
-			out, err := net.Dial("tcp", upstreamAddress)
-			if err != nil {
-				_ = in.Close()
-				return
-			}
-			sockets <- in
-			go func() { defer in.Close(); defer out.Close(); _, _ = io.Copy(out, in) }()
-			go func() { defer in.Close(); defer out.Close(); _, _ = io.Copy(in, out) }()
-		}
-	}()
-	u.Host = listener.Addr().String()
-	f.worker.cfg.ServerURL = u.String()
+	sockets := proxyWorkerConnection(t, f)
 	f.worker.cfg.AutoResume = true
 	sessions := make(chan Session, 4)
 	var launches atomic.Int32
@@ -96,4 +68,38 @@ func TestWorkerAutomaticallyResumesAfterRepeatedConnectionLoss(t *testing.T) {
 	if err != nil || string(data) != "once\n" {
 		t.Fatalf("command was replayed: %q, %v", data, err)
 	}
+}
+
+func proxyWorkerConnection(t *testing.T, f *workerMCPResumeFixture) <-chan net.Conn {
+	t.Helper()
+	u, err := url.Parse(f.worker.cfg.ServerURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	sockets := make(chan net.Conn, 8)
+	upstreamAddress := u.Host
+	go func() {
+		for {
+			in, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			out, err := net.Dial("tcp", upstreamAddress)
+			if err != nil {
+				_ = in.Close()
+				return
+			}
+			sockets <- in
+			go func() { defer in.Close(); defer out.Close(); _, _ = io.Copy(out, in) }()
+			go func() { defer in.Close(); defer out.Close(); _, _ = io.Copy(in, out) }()
+		}
+	}()
+	u.Host = listener.Addr().String()
+	f.worker.cfg.ServerURL = u.String()
+	return sockets
 }

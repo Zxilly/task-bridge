@@ -14,6 +14,8 @@ const ProtocolVersion = 1
 const MaxMessageBytes = 1 << 20
 const MaxToolBytes = 32 << 10
 const MaxOutputPage = 16 << 10
+const DefaultConcurrentTasks = 4
+const MaxConcurrentTasks = 64
 
 type Error struct {
 	Code      string `json:"code"`

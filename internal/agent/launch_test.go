@@ -44,6 +44,16 @@ func init() {
 
 func runLaunchTestHelper() error {
 	switch os.Getenv("TASK_BRIDGE_LAUNCH_TEST_MODE") {
+	case "hold-task":
+		if err := os.WriteFile("process.pid", []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
+			return err
+		}
+		for {
+			if _, err := os.Stat("release-process"); err == nil {
+				return os.WriteFile("released-process", nil, 0600)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
 	case "record":
 		prompt, err := io.ReadAll(os.Stdin)
 		if err != nil {

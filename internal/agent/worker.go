@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/Zxilly/task-bridge/internal/mcpagent"
@@ -25,7 +26,20 @@ type Worker struct {
 	usageReader usageReader
 }
 
+// If the broker cannot persist fencing, a connection teardown must revoke the
+// assignments before any replacement children can start. Ordinary task errors
+// never tear down the shared connection.
+type connectionRecoveryError struct{ error }
+
+func needsConnectionRecovery(err error) bool {
+	var domain *model.Error
+	return !errors.As(err, &domain) || (domain.Code != "stale_assignment" && domain.Code != "invalid_state")
+}
+
 func New(cfg Config, logger *slog.Logger) (*Worker, error) {
+	if cfg.MaxConcurrentTasks == 0 {
+		cfg.MaxConcurrentTasks = model.DefaultConcurrentTasks
+	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -118,8 +132,8 @@ func (w *Worker) runConnection(ctx context.Context) (active, terminal bool, err 
 		}
 		tools = append(tools, tool)
 	}
-	if w.cfg.AutoResume {
-		result, err := upstream.CallTool(connectionCtx, &mcp.CallToolParams{Name: "agent_recovery_configure", Arguments: model.AgentRecoveryConfig{AutoResume: true}})
+	if w.cfg.AutoResume || w.cfg.MaxConcurrentTasks > 1 {
+		result, err := upstream.CallTool(connectionCtx, &mcp.CallToolParams{Name: "agent_recovery_configure", Arguments: model.AgentRecoveryConfig{AutoResume: w.cfg.AutoResume, MaxConcurrentTasks: w.cfg.MaxConcurrentTasks}})
 		if err != nil {
 			return false, false, fmt.Errorf("configure automatic recovery: %w", err)
 		}
@@ -127,7 +141,7 @@ func (w *Worker) runConnection(ctx context.Context) (active, terminal bool, err 
 			return false, true, err
 		}
 	}
-	w.log.Info("agent connected; tasks use separate Claude processes", "auto_resume", w.cfg.AutoResume)
+	w.log.Info("agent connected; tasks use separate Claude processes", "auto_resume", w.cfg.AutoResume, "max_concurrent_tasks", w.cfg.MaxConcurrentTasks)
 	if w.usageReader != nil {
 		usageCtx, stopUsage := context.WithCancel(connectionCtx)
 		usageDone := make(chan struct{})
@@ -137,7 +151,19 @@ func (w *Worker) runConnection(ctx context.Context) (active, terminal bool, err 
 		}()
 		defer func() { stopUsage(); <-usageDone }()
 	}
+	type taskResult struct {
+		offer model.ChannelNotification
+		err   error
+	}
+	results := make(chan taskResult, w.cfg.MaxConcurrentTasks)
+	var workers sync.WaitGroup
+	defer func() { cancel(); workers.Wait() }()
+	inflight := 0
 	for {
+		var offers <-chan model.ChannelNotification
+		if inflight < w.cfg.MaxConcurrentTasks {
+			offers = queue.ready
+		}
 		select {
 		case <-connectionCtx.Done():
 			select {
@@ -145,19 +171,35 @@ func (w *Worker) runConnection(ctx context.Context) (active, terminal bool, err 
 			default:
 				err = connectionCtx.Err()
 			}
-			return false, false, err
-		case offer := <-queue.ready:
+			return active, false, err
+		case result := <-results:
+			inflight--
+			queue.finish(result.offer)
+			if result.err != nil {
+				var recovery *connectionRecoveryError
+				if errors.As(result.err, &recovery) {
+					return active, false, result.err
+				}
+				w.log.Warn("task session stopped; other tasks remain connected", "task_id", result.offer.Meta.TaskID, "error", result.err)
+			}
+		case offer := <-offers:
 			queue.start(offer)
-			var err error
-			if offer.Meta.ResumeRequestID != "" {
-				err = w.resumeTask(connectionCtx, upstream, tools, offer)
-			} else {
-				err = w.runTask(connectionCtx, upstream, tools, offer)
-			}
-			queue.finish(offer)
-			if err != nil {
-				return true, false, err
-			}
+			inflight++
+			active = true
+			workers.Add(1)
+			go func() {
+				defer workers.Done()
+				var taskErr error
+				if offer.Meta.ResumeRequestID != "" {
+					taskErr = w.resumeTask(connectionCtx, upstream, tools, offer)
+				} else {
+					taskErr = w.runTask(connectionCtx, upstream, tools, offer)
+				}
+				select {
+				case results <- taskResult{offer, taskErr}:
+				case <-connectionCtx.Done():
+				}
+			}()
 		}
 	}
 }
@@ -216,6 +258,9 @@ func (w *Worker) resumeTask(ctx context.Context, upstream *mcp.ClientSession, to
 		}
 		if err := reportResumeFailure(ctx, upstream, taskID, requestID, failureCode, failureMessage); err != nil {
 			w.log.Warn("could not persist resume failure", "task_id", taskID, "request_id", requestID, "error", err)
+			if needsConnectionRecovery(err) {
+				resumeErr = &connectionRecoveryError{fmt.Errorf("cannot persist resume fencing for task %s: %w", taskID, err)}
+			}
 		}
 	}()
 	snapshot, err := readTask(ctx, upstream, taskID)
@@ -281,7 +326,7 @@ func reportResumeFailure(ctx context.Context, upstream *mcp.ClientSession, taskI
 	return err
 }
 
-func (w *Worker) runTask(ctx context.Context, upstream *mcp.ClientSession, tools []*mcp.Tool, offer model.ChannelNotification) error {
+func (w *Worker) runTask(ctx context.Context, upstream *mcp.ClientSession, tools []*mcp.Tool, offer model.ChannelNotification) (taskErr error) {
 	snapshot, err := readTask(ctx, upstream, offer.Meta.TaskID)
 	if err != nil {
 		return err
@@ -320,6 +365,25 @@ func (w *Worker) runTask(ctx context.Context, upstream *mcp.ClientSession, tools
 		return errors.New("broker returned a different task acceptance")
 	}
 	task = accepted
+	defer func() {
+		if taskErr == nil || ctx.Err() != nil {
+			return
+		}
+		// Preparation can fail after acceptance but before runSession can
+		// report an outcome. Fence only this assignment, keeping peers alive.
+		reportCtx, cancelReport := context.WithTimeout(ctx, 5*time.Second)
+		defer cancelReport()
+		result, err := upstream.CallTool(reportCtx, &mcp.CallToolParams{Name: "task_interrupt", Arguments: map[string]string{"task_id": task.ID, "assignment_id": task.AssignmentID, "error_code": "task_session_stopped", "message": "The task session stopped before a durable result; inspect task and command records before resuming."}})
+		if err == nil {
+			_, err = decodeTool[model.Task](result)
+		}
+		if err != nil {
+			w.log.Warn("could not fence stopped task session", "task_id", task.ID, "error", err)
+			if needsConnectionRecovery(err) {
+				taskErr = &connectionRecoveryError{fmt.Errorf("cannot persist fencing for task %s: %w", task.ID, err)}
+			}
+		}
+	}()
 	store, err := newSessionStore(w.cfg.StateDir, w.cfg.ServerURL)
 	if err != nil {
 		return err

@@ -527,7 +527,11 @@ func TestConcurrentToolLimitAndCancelledWaitReleaseSlots(t *testing.T) {
 			t.Fatal("64 waits did not start")
 		}
 	}
-	rejected, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "task_get", Arguments: map[string]any{"task_id": "t"}})
+	status, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "task_get", Arguments: map[string]any{"task_id": "t"}})
+	if err != nil || status.IsError {
+		t.Fatalf("command waits starved task monitoring: %+v %v", status, err)
+	}
+	rejected, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "command_wait", Arguments: map[string]any{"task_id": "t", "command_id": "c"}})
 	if err != nil || !rejected.IsError || !strings.Contains(rejected.Content[0].(*mcp.TextContent).Text, "too_many_requests") {
 		t.Fatalf("65th request was not bounded: %+v err=%v", rejected, err)
 	}

@@ -65,5 +65,22 @@ func TestAgentConfigAutomaticRecoveryDefaultAndOverride(t *testing.T) {
 		if cfg.AutoResume != enabled {
 			t.Fatalf("auto_resume=%t, want %t", cfg.AutoResume, enabled)
 		}
+		if cfg.MaxConcurrentTasks != model.DefaultConcurrentTasks {
+			t.Fatalf("default task capacity=%d", cfg.MaxConcurrentTasks)
+		}
+	}
+	for _, capacity := range []int{-1, 8, model.MaxConcurrentTasks + 1} {
+		raw["max_concurrent_tasks"] = capacity
+		if err := os.WriteFile(path, model.JSON(raw), 0600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := LoadConfig(path)
+		if capacity == 8 {
+			if err != nil || cfg.MaxConcurrentTasks != 8 {
+				t.Fatalf("valid capacity rejected: %+v %v", cfg, err)
+			}
+		} else if err == nil {
+			t.Fatalf("invalid task capacity %d accepted", capacity)
+		}
 	}
 }

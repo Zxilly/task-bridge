@@ -73,7 +73,7 @@ func (b *Broker) requestTaskResume(ctx context.Context, c *ClientPeer, a Args) (
 			return err
 		}
 		if slot := b.agents[task.AgentID]; slot != nil {
-			slot.lastOffer = 0
+			delete(slot.lastOffers, task.ID)
 		}
 		out = model.TaskResumeResult{TaskID: task.ID, ResumeRequest: request}
 		return nil
@@ -109,13 +109,19 @@ func (b *Broker) checkResumeReady(tx *storage.Tx, task model.Task) error {
 	if workspace.Quarantined {
 		return model.Err("reconciliation_required", "workspace remains quarantined")
 	}
-	active, err := tx.ActiveTasks()
-	if err != nil {
-		return err
-	}
-	for _, other := range active {
-		if other.ID != task.ID && (other.State == "offered" || other.State == "running" || other.State == "cancel_requested") && (other.WorkspaceID == task.WorkspaceID || other.AgentID == task.AgentID) {
-			return model.Err("resume_busy", "the task workspace or original agent has another active assignment")
+	if slot := b.agents[task.AgentID]; slot != nil {
+		active, err := tx.ActiveTasks()
+		if err != nil {
+			return err
+		}
+		load := 0
+		for _, other := range active {
+			if other.ID != task.ID && other.AgentID == task.AgentID && (other.State == "offered" || other.State == "running" || other.State == "cancel_requested") {
+				load++
+			}
+		}
+		if load >= slot.maxConcurrentTasks {
+			return model.Err("resume_busy", "the original agent has no free task slots")
 		}
 	}
 	return nil

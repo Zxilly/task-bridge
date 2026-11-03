@@ -479,7 +479,6 @@ func TestExecutionDiagnosticsPreserveFailureReasonAndNonzeroExit(t *testing.T) {
 	}
 	defer c.journal.Close()
 	c.cfg.Workspaces = map[string]WorkspaceConfig{"local": {Root: t.TempDir(), BashPath: clientTestBash(t)}}
-	c.workspaces = map[string]chan struct{}{"local": make(chan struct{}, 1)}
 	c.running = map[string]context.CancelFunc{}
 	c.wake = make(chan struct{}, 1)
 	for _, test := range []struct {

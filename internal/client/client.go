@@ -30,18 +30,17 @@ type liveConnection struct {
 	sent    map[string]time.Time
 }
 type Client struct {
-	cfg        Config
-	journal    *Journal
-	logger     *slog.Logger
-	mu         sync.Mutex
-	live       *liveConnection
-	changed    chan struct{}
-	pending    map[string]chan model.Envelope
-	running    map[string]context.CancelFunc
-	workspaces map[string]chan struct{}
-	wake       chan struct{}
-	runners    sync.WaitGroup
-	admitted   int
+	cfg      Config
+	journal  *Journal
+	logger   *slog.Logger
+	mu       sync.Mutex
+	live     *liveConnection
+	changed  chan struct{}
+	pending  map[string]chan model.Envelope
+	running  map[string]context.CancelFunc
+	wake     chan struct{}
+	runners  sync.WaitGroup
+	admitted int
 }
 
 func New(cfg Config, logger *slog.Logger) (*Client, error) {
@@ -62,10 +61,7 @@ func New(cfg Config, logger *slog.Logger) (*Client, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	c := &Client{cfg: cfg, journal: journal, logger: logger, changed: make(chan struct{}), pending: map[string]chan model.Envelope{}, running: map[string]context.CancelFunc{}, workspaces: map[string]chan struct{}{}, wake: make(chan struct{}, 1)}
-	for id := range cfg.Workspaces {
-		c.workspaces[id] = make(chan struct{}, 1)
-	}
+	c := &Client{cfg: cfg, journal: journal, logger: logger, changed: make(chan struct{}), pending: map[string]chan model.Envelope{}, running: map[string]context.CancelFunc{}, wake: make(chan struct{}, 1)}
 	return c, nil
 }
 
@@ -492,14 +488,6 @@ func (c *Client) execute(root context.Context, dispatch model.Dispatch) {
 	ws, ok := c.cfg.Workspaces[dispatch.WorkspaceID]
 	if !ok {
 		notStarted("unknown_workspace", "the dispatched workspace is not configured on this client")
-		return
-	}
-	semaphore := c.workspaces[dispatch.WorkspaceID]
-	select {
-	case semaphore <- struct{}{}:
-		defer func() { <-semaphore }()
-	case <-ctx.Done():
-		notStarted("cancelled_before_start", "the command was cancelled before acquiring the workspace execution slot")
 		return
 	}
 	wasCancelled, err := c.journal.Cancelled(id)

@@ -45,7 +45,7 @@ func toolDefinitions() []toolDefinition {
 	cancel := command()
 	cancel["reason"] = textSchema(1024)
 	return []toolDefinition{
-		{"agent_recovery_configure", "Controller-only: enable automatic recovery of accepted tasks after connection loss. The saved conversation and original deadline are retained; running or unknown commands must be reconciled first.", []string{"auto_resume"}, map[string]*jsonschema.Schema{"auto_resume": {Type: "boolean"}}, false},
+		{"agent_recovery_configure", "Controller-only: enable automatic recovery of accepted tasks after connection loss. The saved conversation and original deadline are retained; running or unknown commands must be reconciled first.", []string{"auto_resume"}, map[string]*jsonschema.Schema{"auto_resume": {Type: "boolean"}, "max_concurrent_tasks": integerSchema(1, model.MaxConcurrentTasks)}, false},
 		{"agent_usage_update", "Controller-only: report passively observed Claude Code account rate limits for B-side queries. Not exposed to task subprocesses.", []string{"usage"}, map[string]*jsonschema.Schema{"usage": {Type: "object"}}, false},
 		{"task_accept", "Accept a channel task offer using its exact task_id and assignment_id.", []string{"task_id", "assignment_id"}, assignment, false},
 		{"task_get", "Read the assigned task and command snapshot.", []string{"task_id"}, map[string]*jsonschema.Schema{"task_id": id()}, true},
@@ -66,6 +66,7 @@ func registerTools(server *mcp.Server, service model.AgentService, principal mod
 	// Waiters are request-scoped and bounded independently of durable work.
 	// Reject excess calls immediately rather than allocating another waiter.
 	slots := make(chan struct{}, 64)
+	waitSlots := make(chan struct{}, 64)
 	for _, def := range toolDefinitions() {
 		schema := &jsonschema.Schema{
 			Type:                 "object",
@@ -84,11 +85,17 @@ func registerTools(server *mcp.Server, service model.AgentService, principal mod
 			if !initialized.Load() {
 				return toolResult(nil, model.Err("not_initialized", "MCP initialization is required")), nil
 			}
+			admission := slots
+			// Long command waits must not consume every slot needed by task
+			// monitors, cancellation and recovery on this shared connection.
+			if def.name == "bash" || def.name == "command_wait" {
+				admission = waitSlots
+			}
 			select {
-			case slots <- struct{}{}:
-				defer func() { <-slots }()
+			case admission <- struct{}{}:
+				defer func() { <-admission }()
 			default:
-				return toolResult(nil, &model.Error{Code: "too_many_requests", Message: "at most 64 concurrent tool calls per connection", Retryable: true}), nil
+				return toolResult(nil, &model.Error{Code: "too_many_requests", Message: "at most 64 concurrent waits and 64 other tool calls per connection", Retryable: true}), nil
 			}
 			var args any
 			if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {

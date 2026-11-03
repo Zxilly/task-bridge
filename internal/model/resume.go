@@ -21,7 +21,8 @@ type TaskResumeRequest struct {
 }
 
 type AgentRecoveryConfig struct {
-	AutoResume bool `json:"auto_resume"`
+	AutoResume         bool `json:"auto_resume"`
+	MaxConcurrentTasks int  `json:"max_concurrent_tasks,omitempty"`
 }
 
 func (AgentRecoveryConfig) agentResult() {}

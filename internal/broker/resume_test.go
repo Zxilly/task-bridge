@@ -469,7 +469,7 @@ func TestTaskResumeNotificationRetriesPendingAndStopsAfterClaim(t *testing.T) {
 		t.Fatal("pending request did not notify immediately")
 	}
 	f.b.mu.Lock()
-	f.b.agents[f.claude.AgentID].lastOffer = 0
+	clear(f.b.agents[f.claude.AgentID].lastOffers)
 	f.b.mu.Unlock()
 	f.b.tick(f.ctx)
 	if len(notifications) != before+2 || notifications[len(notifications)-1].Meta.ResumeRequestID != request.ID {
@@ -477,7 +477,7 @@ func TestTaskResumeNotificationRetriesPendingAndStopsAfterClaim(t *testing.T) {
 	}
 	f.claimResume(task.ID, request.ID)
 	f.b.mu.Lock()
-	f.b.agents[f.claude.AgentID].lastOffer = 0
+	clear(f.b.agents[f.claude.AgentID].lastOffers)
 	f.b.mu.Unlock()
 	f.b.tick(f.ctx)
 	if len(notifications) != before+2 {

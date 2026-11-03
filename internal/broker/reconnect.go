@@ -13,13 +13,17 @@ import (
 // Persist it on accepted tasks so an unplanned broker restart can recover too.
 func (b *Broker) configureAgentRecovery(ctx context.Context, p model.Principal, cid string, raw json.RawMessage) (model.AgentRecoveryConfig, error) {
 	var args struct {
-		AutoResume *bool `json:"auto_resume"`
+		AutoResume         *bool `json:"auto_resume"`
+		MaxConcurrentTasks *int  `json:"max_concurrent_tasks"`
 	}
 	if err := decodeUsageArgs(raw, &args); err != nil {
 		return model.AgentRecoveryConfig{}, err
 	}
 	if args.AutoResume == nil {
 		return model.AgentRecoveryConfig{}, model.Err("invalid_arguments", "auto_resume is required")
+	}
+	if args.MaxConcurrentTasks != nil && (*args.MaxConcurrentTasks < 1 || *args.MaxConcurrentTasks > model.MaxConcurrentTasks) {
+		return model.AgentRecoveryConfig{}, model.Err("invalid_arguments", "max_concurrent_tasks must be between 1 and 64")
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -31,7 +35,10 @@ func (b *Broker) configureAgentRecovery(ctx context.Context, p model.Principal, 
 		return model.AgentRecoveryConfig{}, model.Err("stale_connection", "current agent connection required")
 	}
 	slot.autoResume = *args.AutoResume
-	return model.AgentRecoveryConfig{AutoResume: slot.autoResume}, nil
+	if args.MaxConcurrentTasks != nil {
+		slot.maxConcurrentTasks = *args.MaxConcurrentTasks
+	}
+	return model.AgentRecoveryConfig{AutoResume: slot.autoResume, MaxConcurrentTasks: slot.maxConcurrentTasks}, nil
 }
 
 func queueAutomaticResume(tx *storage.Tx, task *model.Task) error {

@@ -39,23 +39,29 @@ func TestChannelQueueDoesNotBlockProtocolRepliesAndDeduplicates(t *testing.T) {
 	if got, err := connection.Read(context.Background()); err != nil || got != marker {
 		t.Fatalf("reply was blocked or altered: %v %v", got, err)
 	}
-	if len(q.ready) != 1 {
+	if len(q.ready) != 2 {
 		t.Fatalf("queued offers=%d", len(q.ready))
 	}
 	q.start(<-q.ready)
+	q.start(<-q.ready)
 	q.push(first)
-	if len(q.ready) != 0 {
-		t.Fatal("active task was queued twice")
-	}
 	q.push(second)
-	q.finish(first)
-	if got := <-q.ready; got.Meta.TaskID != "task2" {
-		t.Fatalf("next offer=%+v", got)
+	if len(q.ready) != 0 {
+		t.Fatal("an active task was queued twice")
 	}
+	q.finish(first)
 	q.push(first)
 	if len(q.ready) != 0 {
 		t.Fatal("completed task was queued again")
 	}
+	// A resume notification for one task must not suppress another task.
+	resumed := first
+	resumed.Meta.ResumeRequestID = "resume-first"
+	q.push(resumed)
+	if len(q.ready) != 1 {
+		t.Fatal("resume notification was lost")
+	}
+
 }
 
 func TestChannelTransportRejectsCallsAndMalformedRouting(t *testing.T) {

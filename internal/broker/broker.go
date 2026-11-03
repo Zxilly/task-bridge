@@ -19,13 +19,14 @@ import (
 )
 
 type agent struct {
-	autoResume      bool
-	p               model.Principal
-	id              string
-	notify          model.ChannelNotifier
-	lastOffer       int64
-	usage           model.AccountUsage
-	usageReceivedAt int64
+	autoResume         bool
+	p                  model.Principal
+	id                 string
+	notify             model.ChannelNotifier
+	lastOffers         map[string]int64
+	maxConcurrentTasks int
+	usage              model.AccountUsage
+	usageReceivedAt    int64
 }
 type ClientPeer struct {
 	Principal  model.Principal
@@ -111,7 +112,7 @@ func (b *Broker) AgentConnected(ctx context.Context, p model.Principal, id strin
 		b.mu.Unlock()
 		return model.Err("duplicate_session", "agent slot already has a live connection")
 	}
-	b.agents[p.AgentID] = &agent{p: p, id: id, notify: notify}
+	b.agents[p.AgentID] = &agent{p: p, id: id, notify: notify, lastOffers: map[string]int64{}, maxConcurrentTasks: 1}
 	b.mu.Unlock()
 	b.signal()
 	return nil
@@ -315,8 +316,18 @@ func (b *Broker) tick(ctx context.Context) {
 			return e
 		}
 		now := model.Now()
-		busy := map[string]bool{}
-		agentBusy := map[string]bool{}
+		liveIDs := map[string]bool{}
+		for _, t := range ts {
+			liveIDs[t.ID] = true
+		}
+		for _, a := range b.agents {
+			for id := range a.lastOffers {
+				if !liveIDs[id] {
+					delete(a.lastOffers, id)
+				}
+			}
+		}
+		agentLoad := map[string]int{}
 		for i := range ts {
 			t := &ts[i]
 			if t.Terminal() {
@@ -341,10 +352,6 @@ func (b *Broker) tick(ctx context.Context) {
 					}
 				}
 			}
-			if t.State != "queued" && !t.Terminal() {
-				busy[t.WorkspaceID] = true
-				agentBusy[t.AgentID] = true
-			}
 			if t.State == "running" {
 				if a := b.agents[t.AgentID]; a != nil && a.id == t.ConnectionID {
 					t.LeaseUntil = now + 60000
@@ -358,10 +365,26 @@ func (b *Broker) tick(ctx context.Context) {
 					return e
 				}
 			}
+			if t.State == "offered" || t.State == "running" || t.State == "cancel_requested" {
+				agentLoad[t.AgentID]++
+			}
+		}
+		// Reserve available slots for saved conversations before new tasks.
+		// Reservations are recomputed each tick; claims recheck live capacity.
+		resumable := map[string]bool{}
+		for _, t := range ts {
+			if t.State != "interrupted" || t.ResumeRequest == nil || t.ResumeRequest.State != "pending" {
+				continue
+			}
+			a := b.agents[t.AgentID]
+			if a != nil && agentLoad[t.AgentID] < a.maxConcurrentTasks && b.checkResumeReady(tx, t) == nil {
+				resumable[t.ID] = true
+				agentLoad[t.AgentID]++
+			}
 		}
 		for i := range ts {
 			t := &ts[i]
-			if t.State == "queued" && !busy[t.WorkspaceID] && supportsWorkspace(b.clients[t.ExecutorID], t.WorkspaceID) {
+			if t.State == "queued" && supportsWorkspace(b.clients[t.ExecutorID], t.WorkspaceID) {
 				w, e := tx.Workspace(t.WorkspaceID)
 				if e != nil {
 					return e
@@ -370,37 +393,32 @@ func (b *Broker) tick(ctx context.Context) {
 					continue
 				}
 				for _, a := range b.agents {
-					if a.p.WorkspaceID == t.WorkspaceID && !agentBusy[a.p.AgentID] && (t.AgentID == "" || t.AgentID == a.p.AgentID) {
+					if a.p.WorkspaceID == t.WorkspaceID && agentLoad[a.p.AgentID] < a.maxConcurrentTasks && (t.AgentID == "" || t.AgentID == a.p.AgentID) {
 						t.State = "offered"
 						t.AssignmentID = uuid.NewString()
 						t.ConnectionID = a.id
 						t.AgentID = a.p.AgentID
 						t.LeaseEpoch++
 						t.LeaseUntil = now + 60000
-						a.lastOffer = 0
+						delete(a.lastOffers, t.ID)
 						if e = tx.SaveTask(*t); e != nil {
 							return e
 						}
 						if e = tx.Event(t.ID, "task.offered", model.AssignmentPayload{AssignmentID: t.AssignmentID}); e != nil {
 							return e
 						}
-						busy[t.WorkspaceID] = true
-						agentBusy[a.p.AgentID] = true
+						agentLoad[a.p.AgentID]++
 						break
 					}
 				}
 			}
 			if (t.State == "offered" || t.State == "interrupted") && b.agents[t.AgentID] != nil {
 				a := b.agents[t.AgentID]
-				if t.ResumeRequest != nil && t.ResumeRequest.State == "pending" && t.ResumeRequest.Automatic {
-					// An in-flight B command may finish after A disconnects. Wait
-					// for that result; never replay running or unknown commands.
-					if e := b.checkResumeReady(tx, *t); e != nil {
-						continue
-					}
+				if t.ResumeRequest != nil && t.ResumeRequest.State == "pending" && !resumable[t.ID] {
+					continue
 				}
-				if now-a.lastOffer > 15000 {
-					a.lastOffer = now
+				if now-a.lastOffers[t.ID] > 15000 {
+					a.lastOffers[t.ID] = now
 					content := "New task. Call task_accept with the task_id and assignment_id, then use the remote bash tool and task_complete.\n" + t.Prompt
 					if t.State == "interrupted" {
 						content = "Interrupted task. Await an explicit resume request from the original B submitter.\n" + t.Prompt

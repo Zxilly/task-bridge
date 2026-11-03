@@ -12,21 +12,24 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/Zxilly/task-bridge/internal/model"
 )
 
 type Config struct {
-	AutoResume      bool   `json:"auto_resume"`
-	ServerURL       string `json:"server_url"`
-	TokenEnv        string `json:"token_env,omitempty"`
-	TokenFile       string `json:"token_file,omitempty"`
-	ClaudePath      string `json:"claude_path,omitempty"`
-	StateDir        string `json:"state_dir,omitempty"`
-	Model           string `json:"model,omitempty"`
-	AllowInsecureWS bool   `json:"allow_insecure_ws,omitempty"`
+	MaxConcurrentTasks int    `json:"max_concurrent_tasks,omitempty"`
+	AutoResume         bool   `json:"auto_resume"`
+	ServerURL          string `json:"server_url"`
+	TokenEnv           string `json:"token_env,omitempty"`
+	TokenFile          string `json:"token_file,omitempty"`
+	ClaudePath         string `json:"claude_path,omitempty"`
+	StateDir           string `json:"state_dir,omitempty"`
+	Model              string `json:"model,omitempty"`
+	AllowInsecureWS    bool   `json:"allow_insecure_ws,omitempty"`
 }
 
 func LoadConfig(path string) (Config, error) {
-	cfg := Config{ClaudePath: "claude", StateDir: "agent-state", AutoResume: true}
+	cfg := Config{ClaudePath: "claude", StateDir: "agent-state", AutoResume: true, MaxConcurrentTasks: model.DefaultConcurrentTasks}
 	file, err := os.Open(path)
 	if err != nil {
 		return cfg, err
@@ -58,6 +61,9 @@ func LoadConfig(path string) (Config, error) {
 }
 
 func (c Config) Validate() error {
+	if c.MaxConcurrentTasks < 0 || c.MaxConcurrentTasks > model.MaxConcurrentTasks {
+		return fmt.Errorf("max_concurrent_tasks must be between 1 and %d (0 selects the default)", model.MaxConcurrentTasks)
+	}
 	u, err := url.Parse(c.ServerURL)
 	if err != nil || u.Host == "" || (u.Scheme != "ws" && u.Scheme != "wss") || u.User != nil || u.Fragment != "" {
 		return errors.New("server_url must be a ws/wss URL without credentials or fragment")

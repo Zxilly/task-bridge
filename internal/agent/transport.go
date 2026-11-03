@@ -16,35 +16,49 @@ import (
 type offerQueue struct {
 	mu                        sync.Mutex
 	ready                     chan model.ChannelNotification
-	active, queued, completed string
+	queued, active, completed map[string]string
+	completedOrder            []string
 }
 
-func newOfferQueue() *offerQueue { return &offerQueue{ready: make(chan model.ChannelNotification, 1)} }
+func newOfferQueue() *offerQueue {
+	return &offerQueue{ready: make(chan model.ChannelNotification, 128), queued: map[string]string{}, active: map[string]string{}, completed: map[string]string{}}
+}
 func offerKey(n model.ChannelNotification) string {
 	return n.Meta.TaskID + "/" + n.Meta.AssignmentID + "/" + n.Meta.ResumeRequestID
 }
 func (q *offerQueue) push(n model.ChannelNotification) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	key := offerKey(n)
-	if key == q.active || key == q.queued || key == q.completed {
+	id, key := n.Meta.TaskID, offerKey(n)
+	if q.active[id] != "" || q.queued[id] != "" || q.completed[id] == key {
 		return
 	}
 	select {
 	case q.ready <- n:
-		q.queued = key
+		q.queued[id] = key
 	default:
 	}
 }
 func (q *offerQueue) start(n model.ChannelNotification) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	q.queued, q.active = "", offerKey(n)
+	delete(q.queued, n.Meta.TaskID)
+	q.active[n.Meta.TaskID] = offerKey(n)
 }
 func (q *offerQueue) finish(n model.ChannelNotification) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	q.active, q.completed = "", offerKey(n)
+	id := n.Meta.TaskID
+	delete(q.active, id)
+	if _, ok := q.completed[id]; !ok {
+		q.completedOrder = append(q.completedOrder, id)
+	}
+	q.completed[id] = offerKey(n)
+	// Evicted stale notices still pass through task_get before any launch.
+	if len(q.completedOrder) > 1024 {
+		delete(q.completed, q.completedOrder[0])
+		q.completedOrder = q.completedOrder[1:]
+	}
 }
 
 type channelTransport struct {

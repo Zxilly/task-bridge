@@ -109,7 +109,7 @@ func setupWorkerMCPResume(t *testing.T) *workerMCPResumeFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	worker, err := New(Config{
+	worker, err := New(Config{MaxConcurrentTasks: 1,
 		ServerURL: "ws" + strings.TrimPrefix(server.URL, "http") + "/mcp/agent", TokenFile: tokenAPath,
 		ClaudePath: executable, StateDir: filepath.Join(directory, "A-state"),
 	}, logger)
