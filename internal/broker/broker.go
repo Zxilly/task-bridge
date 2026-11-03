@@ -19,6 +19,7 @@ import (
 )
 
 type agent struct {
+	autoResume      bool
 	p               model.Principal
 	id              string
 	notify          model.ChannelNotifier
@@ -130,6 +131,7 @@ func (b *Broker) AgentDisconnected(p model.Principal, id string) {
 		}
 		for _, t := range ts {
 			if t.ConnectionID == id && !t.Terminal() {
+				wasRunning := t.State == "running"
 				cs, e := tx.Commands(t.ID)
 				if e != nil {
 					return e
@@ -150,6 +152,11 @@ func (b *Broker) AgentDisconnected(p model.Principal, id string) {
 				}
 				if e = tx.Event(t.ID, "agent.disconnected", model.TaskStatePayload{State: t.State}); e != nil {
 					return e
+				}
+				if wasRunning && t.AutoResume {
+					if e = queueAutomaticResume(tx, &t); e != nil {
+						return e
+					}
 				}
 			}
 		}
@@ -237,6 +244,7 @@ func (b *Broker) Recover(ctx context.Context) error {
 		}
 		for _, t := range ts {
 			if !t.Terminal() && t.State != "queued" {
+				wasRunning := t.State == "running"
 				if t.State != "cancel_requested" {
 					t.State = "interrupted"
 				}
@@ -246,6 +254,11 @@ func (b *Broker) Recover(ctx context.Context) error {
 				}
 				if e = tx.SaveTask(t); e != nil {
 					return e
+				}
+				if wasRunning && t.AutoResume {
+					if e = queueAutomaticResume(tx, &t); e != nil {
+						return e
+					}
 				}
 			}
 		}
@@ -379,6 +392,13 @@ func (b *Broker) tick(ctx context.Context) {
 			}
 			if (t.State == "offered" || t.State == "interrupted") && b.agents[t.AgentID] != nil {
 				a := b.agents[t.AgentID]
+				if t.ResumeRequest != nil && t.ResumeRequest.State == "pending" && t.ResumeRequest.Automatic {
+					// An in-flight B command may finish after A disconnects. Wait
+					// for that result; never replay running or unknown commands.
+					if e := b.checkResumeReady(tx, *t); e != nil {
+						continue
+					}
+				}
 				if now-a.lastOffer > 15000 {
 					a.lastOffer = now
 					content := "New task. Call task_accept with the task_id and assignment_id, then use the remote bash tool and task_complete.\n" + t.Prompt
@@ -389,6 +409,9 @@ func (b *Broker) tick(ctx context.Context) {
 					if t.ResumeRequest != nil && t.ResumeRequest.State == "pending" {
 						resumeID = t.ResumeRequest.ID
 						content = "B requested resuming this task's original saved conversation. The controller must claim resume_request_id using task_resume before starting Claude.\n" + t.Prompt
+						if t.ResumeRequest.Automatic {
+							content = "Automatically recover this task after its controller connection was lost. Claim resume_request_id using task_resume and continue only the saved conversation.\n" + t.Prompt
+						}
 					}
 					notices = append(notices, notice{
 						a: a,
@@ -612,6 +635,9 @@ func (b *Broker) CallAgent(ctx context.Context, p model.Principal, cid, method s
 	if method == "agent_usage_update" {
 		return b.updateAgentUsage(ctx, p, cid, raw)
 	}
+	if method == "agent_recovery_configure" {
+		return b.configureAgentRecovery(ctx, p, cid, raw)
+	}
 	a, e := parse(raw)
 	if e != nil {
 		return nil, e
@@ -644,6 +670,7 @@ func (b *Broker) CallAgent(ctx context.Context, p model.Principal, cid, method s
 				return model.Err("invalid_state", "task is not offered")
 			}
 			t.State = "running"
+			t.AutoResume = b.agents[p.AgentID].autoResume
 			if e = tx.SaveTask(t); e != nil {
 				return e
 			}
@@ -681,6 +708,7 @@ func (b *Broker) CallAgent(ctx context.Context, p model.Principal, cid, method s
 			t.LeaseEpoch++
 			t.LeaseUntil = model.Now() + 60000
 			t.State = "running"
+			t.AutoResume = slot.autoResume
 			t.Error = nil
 			if e = tx.SaveTask(t); e != nil {
 				return e

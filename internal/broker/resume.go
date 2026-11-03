@@ -144,12 +144,20 @@ func (b *Broker) claimTaskResume(tx *storage.Tx, task *model.Task, p model.Princ
 	if err := b.checkResumeReady(tx, *task); err != nil {
 		return err
 	}
+	requester, err := tx.Principal(task.RequesterID)
+	if err != nil {
+		return err
+	}
+	if requester.Disabled {
+		return model.Err("unauthorized", "task requester was revoked")
+	}
 	now := model.Now()
 	task.AssignmentID = uuid.NewString()
 	task.ConnectionID = cid
 	task.LeaseEpoch++
 	task.LeaseUntil = now + 60000
 	task.State = "running"
+	task.AutoResume = b.agents[p.AgentID].autoResume
 	task.Error = nil
 	request.State = "accepted"
 	request.AssignmentID = task.AssignmentID

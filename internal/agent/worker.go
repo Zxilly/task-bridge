@@ -67,7 +67,7 @@ func (w *Worker) Run(ctx context.Context) error {
 		}
 		if active {
 			backoff = time.Second
-			w.log.Warn("task session ended; reconnecting to await B-side recovery", "error", err)
+			w.log.Warn("task session ended; reconnecting", "auto_resume", w.cfg.AutoResume, "error", err)
 		} else {
 			w.log.Warn("agent connection lost; reconnecting", "error", err)
 		}
@@ -103,7 +103,7 @@ func (w *Worker) runConnection(ctx context.Context) (active, terminal bool, err 
 	connectionCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	queue := newOfferQueue()
-	client := mcp.NewClient(&mcp.Implementation{Name: "task-bridge-agent", Version: model.Version}, nil)
+	client := mcp.NewClient(&mcp.Implementation{Name: "task-bridge-agent", Version: model.Version}, &mcp.ClientOptions{KeepAlive: 30 * time.Second, KeepAliveFailureThreshold: 2, Logger: w.log})
 	upstream, err := client.Connect(connectionCtx, channelTransport{Transport: mcpagent.NewTransport(socket), queue: queue}, &mcp.ClientSessionOptions{ProtocolVersion: mcpagent.ProtocolVersion})
 	if err != nil {
 		return false, false, err
@@ -118,7 +118,16 @@ func (w *Worker) runConnection(ctx context.Context) (active, terminal bool, err 
 		}
 		tools = append(tools, tool)
 	}
-	w.log.Info("agent connected; tasks use separate Claude processes")
+	if w.cfg.AutoResume {
+		result, err := upstream.CallTool(connectionCtx, &mcp.CallToolParams{Name: "agent_recovery_configure", Arguments: model.AgentRecoveryConfig{AutoResume: true}})
+		if err != nil {
+			return false, false, fmt.Errorf("configure automatic recovery: %w", err)
+		}
+		if _, err := decodeTool[model.AgentRecoveryConfig](result); err != nil {
+			return false, true, err
+		}
+	}
+	w.log.Info("agent connected; tasks use separate Claude processes", "auto_resume", w.cfg.AutoResume)
 	if w.usageReader != nil {
 		usageCtx, stopUsage := context.WithCancel(connectionCtx)
 		usageDone := make(chan struct{})

@@ -16,6 +16,7 @@ func TestWorkerReportsCLIRejectionWithoutDisconnectingOrRetrying(t *testing.T) {
 	for _, mode := range []string{"auth-error", "rate-error"} {
 		t.Run(mode, func(t *testing.T) {
 			f := setupWorker(t)
+			f.worker.cfg.AutoResume = true
 			launcher, _ := launcherHelper(t, mode)
 			first := f.submit(t, "cli-failure", "do not retry this task")
 			var launches atomic.Int32

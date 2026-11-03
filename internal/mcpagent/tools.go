@@ -45,6 +45,7 @@ func toolDefinitions() []toolDefinition {
 	cancel := command()
 	cancel["reason"] = textSchema(1024)
 	return []toolDefinition{
+		{"agent_recovery_configure", "Controller-only: enable automatic recovery of accepted tasks after connection loss. The saved conversation and original deadline are retained; running or unknown commands must be reconciled first.", []string{"auto_resume"}, map[string]*jsonschema.Schema{"auto_resume": {Type: "boolean"}}, false},
 		{"agent_usage_update", "Controller-only: report passively observed Claude Code account rate limits for B-side queries. Not exposed to task subprocesses.", []string{"usage"}, map[string]*jsonschema.Schema{"usage": {Type: "object"}}, false},
 		{"task_accept", "Accept a channel task offer using its exact task_id and assignment_id.", []string{"task_id", "assignment_id"}, assignment, false},
 		{"task_get", "Read the assigned task and command snapshot.", []string{"task_id"}, map[string]*jsonschema.Schema{"task_id": id()}, true},

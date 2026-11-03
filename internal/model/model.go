@@ -54,6 +54,7 @@ type Workspace struct {
 	QuarantineReason string `json:"quarantine_reason,omitempty"`
 }
 type Task struct {
+	AutoResume     bool               `json:"auto_resume,omitempty"`
 	Error          *Error             `json:"error,omitempty"`
 	ResumeRequest  *TaskResumeRequest `json:"resume_request,omitempty"`
 	ID             string             `json:"task_id"`

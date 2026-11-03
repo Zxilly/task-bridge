@@ -15,6 +15,7 @@ import (
 )
 
 type Config struct {
+	AutoResume      bool   `json:"auto_resume"`
 	ServerURL       string `json:"server_url"`
 	TokenEnv        string `json:"token_env,omitempty"`
 	TokenFile       string `json:"token_file,omitempty"`
@@ -25,7 +26,7 @@ type Config struct {
 }
 
 func LoadConfig(path string) (Config, error) {
-	cfg := Config{ClaudePath: "claude", StateDir: "agent-state"}
+	cfg := Config{ClaudePath: "claude", StateDir: "agent-state", AutoResume: true}
 	file, err := os.Open(path)
 	if err != nil {
 		return cfg, err

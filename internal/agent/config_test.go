@@ -43,3 +43,27 @@ func TestAgentConfigResolvesPathsAndRejectsAmbiguousCredentials(t *testing.T) {
 		t.Fatalf("extra object accepted: %v", err)
 	}
 }
+
+func TestAgentConfigAutomaticRecoveryDefaultAndOverride(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "agent.json")
+	raw := map[string]any{"server_url": "ws://127.0.0.1:8080/mcp/agent", "token_file": "agent.token", "claude_path": exe}
+	for _, enabled := range []bool{true, false} {
+		if !enabled {
+			raw["auto_resume"] = false
+		}
+		if err := os.WriteFile(path, model.JSON(raw), 0600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := LoadConfig(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.AutoResume != enabled {
+			t.Fatalf("auto_resume=%t, want %t", cfg.AutoResume, enabled)
+		}
+	}
+}

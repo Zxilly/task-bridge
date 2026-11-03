@@ -1,9 +1,10 @@
 package model
 
-// TaskResumeRequest records one explicit B-side attempt to continue a task.
+// TaskResumeRequest records one B-side or automatic connection-recovery attempt.
 // Accepted means that one controller has consumed the request, not that its
 // Claude process has started or that the task has completed.
 type TaskResumeRequest struct {
+	Automatic            bool   `json:"automatic,omitempty"`
 	ID                   string `json:"request_id"`
 	TaskID               string `json:"task_id"`
 	RequesterID          string `json:"requester_id"`
@@ -18,6 +19,12 @@ type TaskResumeRequest struct {
 	AcceptedAt           int64  `json:"accepted_at,omitempty"`
 	Error                *Error `json:"error,omitempty"`
 }
+
+type AgentRecoveryConfig struct {
+	AutoResume bool `json:"auto_resume"`
+}
+
+func (AgentRecoveryConfig) agentResult() {}
 
 type TaskResumeArgs struct {
 	TaskID         string `json:"task_id" jsonschema:"Existing interrupted task originally submitted by this executor credential"`
