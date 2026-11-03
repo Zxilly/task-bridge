@@ -113,6 +113,8 @@ bin/task-bridge-agent run --config agent.json
 
 工具返回原 `task_id` 和持久化的 `resume_request`。A 消费该显式请求后，使用原 Claude session UUID 和工作目录、新 assignment 及 relay 凭据恢复会话。`pending` 表示等待 A，`accepted` 表示请求已被领取；任务结果仍通过同一 ID 的 `tasks_get` / `tasks_wait` 查询。响应不明时复用同一个 key；本次恢复失败后核对原因，再用新 key 请求另一次尝试。unknown、reconcile 与隔离检查保持有效，缺失会话映射或 transcript 时不创建新会话。完整步骤见 [运维文档](docs/operations.md#恢复一个已保存的任务)。
 
+不同 task 的 B 命令可以在同一 workspace 并行执行；同一 task 内仍一次执行一条命令。B 使用配置的共享根目录，不自动创建 Git worktree。
+
 A 默认在连接中断后自动恢复原会话；恢复会等待已有命令结果并更新 assignment，不延长任务期限。Claude 自身报错仍需显式恢复。可在 A 配置中设置 `auto_resume: false` 关闭自动恢复。
 
 自动记忆和普通 hooks 在子会话中关闭。用户及管理层的 Claude 规则仍可能适用；这些规则与前一个任务的聊天历史不同。该行为隔离任务上下文，不提供操作系统沙箱。参数、权限和恢复边界见 [运维步骤](docs/operations.md)。
@@ -129,7 +131,7 @@ B 工具包括 `tasks_submit`、`tasks_run`、`tasks_get`、`tasks_wait`、`task
 
 ## 行为边界
 
-- 一台服务端进程配合本地 SQLite；一个 A 身份固定工作区，工作区串行处理任务，默认每个任务使用不同 Claude 会话。
+- 一台服务端进程配合本地 SQLite；一个 A 身份固定工作区，同一工作区可并发处理多个任务；每个 task 启动独立 Claude Code 进程、会话和 relay。A 的 `max_concurrent_tasks` 默认 4，范围 1–64；超出容量的任务排队。
 - A 子进程未提交最终结果便退出时，控制器保留原会话映射和工作目录，上报 `task_interrupt` 撤销当前分派权限并保持连接。B 可查询 `task.error` 区分认证失败、额度耗尽等原因，再显式调用 `tasks_resume`。旧 interrupted 通知不会自动重跑任务；每个恢复请求最多领取一次。旧服务端不支持该工具时，A 保存公开诊断到 progress 后通过断开重连撤销权限。
 - 等待请求结束或断线不等于任务结束。使用返回的 `task_id`、`command_id` 查询已保存的状态。
 - 相同逻辑命令重试复用 `operation_key`。结果不明时先查询；更换 key 无法避免重复副作用。

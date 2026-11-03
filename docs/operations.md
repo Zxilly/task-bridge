@@ -50,7 +50,7 @@ Windows 的 `root` 使用 Windows 路径，`bash_path` 通常为 `C:\Program Fil
 
 ## A 控制器与 Claude 登录
 
-默认 A 使用 `task-bridge-agent run`。控制器接收 broker 的 channel 通知，为每个新任务启动独立的 `claude --print` 子进程，并响应 B 发起的原会话恢复请求。Claude 通过当前任务的本机 HTTP MCP relay 调用远程工具，不直接在 headless 模式加载 development channel。
+默认 A 使用 `task-bridge-agent run`。同一 workspace 支持多个并发 task，每个 task 拥有独立 Claude Code 进程、UUID、目录及 relay 凭据。控制器接收 broker 的 channel 通知，为每个新任务启动独立的 `claude --print` 子进程，并响应 B 发起的原会话恢复请求。Claude 通过当前任务的本机 HTTP MCP relay 调用远程工具，不直接在 headless 模式加载 development channel。
 
 在运行控制器的同一个系统账号下安装 Claude Code，并完成 `claude auth login`。已有有效登录可以直接复用。不要复制认证文件或为了运行控制器切换为 API key。`--bare` 不使用订阅 OAuth，因此默认启动参数不使用它。
 
@@ -62,6 +62,8 @@ Windows 的 `root` 使用 Windows 路径，`bash_path` 通常为 `C:\Program Fil
 | `token_env` 或 `token_file` | `claude` 角色设备 token，二选一；与 Claude 账号登录分开 |
 | `claude_path` | Claude CLI 名称或可执行文件路径，默认 `claude` |
 | `state_dir` | 私有状态目录，默认配置目录下的 `agent-state`；持有排他锁，保存未完成任务的会话映射与工作目录 |
+| `max_concurrent_tasks` | 同一 A 同时运行的 Claude Code 进程数，默认 4，范围 1–64；设为 1 使用单槽位。超出容量的任务排队 |
+| `auto_resume` | 是否在连接中断后自动恢复已保存会话，默认开启 |
 | `model` | 可选；任务未指定 `model` 时使用此默认值，均未填写时使用 Claude 的正常模型选择 |
 | `allow_insecure_ws` | 仅为受控开发网络显式允许非 loopback 的明文 WS，默认关闭 |
 
@@ -83,6 +85,14 @@ bin/task-bridge-agent run --config agent.json
 子进程设置 `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`，并通过会话设置关闭 auto memory 和普通 hooks，避免跨任务自动记忆。managed hooks 只能由 managed 设置关闭；用户或 managed CLAUDE 规则仍可能进入上下文。auto memory 与会话 transcript 分开：transcript 保持启用，以便恢复同一任务。启动器清除继承的 transcript 禁写变量，并关闭 `CLAUDE_CODE_RESUME_INTERRUPTED_TURN`，让恢复使用本次明确的提示。工作目录约束不构成操作系统沙箱。官方说明见 [会话恢复](https://code.claude.com/docs/en/sessions#what-a-resumed-session-restores)、[autoMemoryEnabled](https://code.claude.com/docs/en/settings-reference#automemoryenabled) 与 [disableAllHooks](https://code.claude.com/docs/en/settings-reference#disableallhooks)。
 
 `state_dir/sessions/` 保存任务与 Claude UUID 的映射和工作目录，不保存 Claude 登录凭据；MCP 配置每次启动时重建，进程结束后移除。未完成任务在进程退出后保留映射和工作目录；broker 确认终态后，控制器仅清理自己持有的任务目录。Claude 的 transcript 仍由 Claude 管理，默认位于 `~/.claude/projects/`，Windows 为 `%USERPROFILE%\.claude\projects\`，设置 `CLAUDE_CONFIG_DIR` 时使用对应位置。恢复时保留原系统账号与 Claude 配置目录。transcript 包含对话和工具结果，默认受 Claude 的 30 天保留期影响；本程序不会删除或复制用户 profile 中的 transcript。[Claude 会话存储说明](https://code.claude.com/docs/en/sessions#where-transcripts-are-stored)
+
+### 同一 workspace 并发任务
+
+控制器在认证后向 broker 上报 `max_concurrent_tasks`，默认 4。调度同时计算 offered、running 和 cancel_requested 的容量占用，优先为待恢复会话保留槽位。未上报容量的旧控制器保持单槽位。B 不再按 workspace 串行执行命令；不同 task 可同时执行，同一 task 的 command_busy、operation_key 幂等性和 assignment 校验保持有效。任务共享 B 配置的根目录，不自动创建 worktree；文件与 Git 操作的协调属于任务内容。
+
+单个任务失败或取消只停止其子进程并关闭其 relay。上游连接中断时，控制器先停止并等待全部旧子进程结束，再重连、分别恢复各自保存的会话。工作区隔离仍会阻止新执行。
+
+部署需更新 broker、A 和 B；先备份数据库并更新 broker（迁移 00004 移除 workspace 活动任务唯一索引），再更新 A、B 进程。仅替换 B 磁盘文件不能改变仍在运行的旧 MCP 进程的串行行为。迁移回退前须排空并发活动任务。
 
 ### 连接中断后的自动恢复
 

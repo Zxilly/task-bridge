@@ -75,7 +75,7 @@ Create a new `client.json`, or parse, back up, and merge an existing one without
 }
 ```
 
-Use a JSON serializer so Windows backslashes are escaped correctly. The workspace key is the registered logical ID; `root` is its mapping on this B machine. Command execution runs with this machine's account privileges. The workspace path restriction is not an operating-system sandbox.
+Use a JSON serializer so Windows backslashes are escaped correctly. The workspace key is the registered logical ID; `root` is its mapping on this B machine. Different tasks in one workspace may execute commands concurrently. They share this configured root; the bridge does not create per-task Git worktrees. Each individual task still has at most one outstanding command. Command execution runs with this machine's account privileges. The workspace path restriction is not an operating-system sandbox.
 
 If the host reliably inherits a private `BRIDGE_EXECUTOR_TOKEN` environment variable, replace `token_file` with `"token_env": "BRIDGE_EXECUTOR_TOKEN"`. Configure exactly one of these two fields. Unlike Claude MCP configuration, `client.json` does not expand `${VARIABLE}` expressions; `token_env` names the variable to read. Relative journal, token-file, and workspace paths are resolved against the directory containing `client.json`, not the host's working directory. Absolute paths avoid ambiguity.
 
@@ -181,7 +181,7 @@ The result contains the same `task_id` and a durable `resume_request` with a `re
 
 If the request's response is lost, retry `tasks_resume` with the same key. That key returns its original receipt even after a newer attempt exists. If the receipt is `failed`, inspect its `error` and resolve the cause before using a new key to explicitly request another attempt. The same request is never consumed twice, and reconnecting A does not retry a failed attempt. A new key is refused while an existing request is pending or accepted.
 
-Recovery keeps the original task, prompt, deadline, Claude session UUID, and working directory. It refreshes assignment and relay credentials. Unknown or running commands, incomplete reconciliation, quarantine, active assignments, expired deadlines, and terminal tasks can block a new request. Missing A state or transcript fails recovery without creating a replacement conversation; see [the A guide](claude.md#resume-one-saved-task). Do not submit a new task or change a command's operation key to bypass uncertain execution.
+Recovery keeps the original task, prompt, deadline, Claude session UUID, and working directory. It refreshes assignment and relay credentials. Unknown or running commands, incomplete reconciliation, quarantine, exhausted agent capacity, expired deadlines, and terminal tasks can block a new request. Missing A state or transcript fails recovery without creating a replacement conversation; see [the A guide](claude.md#resume-one-saved-task). Do not submit a new task or change a command's operation key to bypass uncertain execution.
 
 ## Preserve recovery state and report
 

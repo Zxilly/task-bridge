@@ -93,7 +93,7 @@ channel 示例：
 
 | 工具 | 必需参数 | 可选参数与行为 |
 | --- | --- | --- |
-| `agent_recovery_configure` | `auto_resume` | 仅供控制器配置当前连接接受任务的自动恢复策略，不向 Claude relay 暴露；默认 A 配置启用 |
+| `agent_recovery_configure` | `auto_resume` | 可选 `max_concurrent_tasks`（1–64）；配置当前连接的自动恢复与并发容量，不向 Claude relay 暴露。未上报容量的旧控制器保持 1 个槽位；新 A 默认上报 4 |
 | `agent_usage_update` | `usage` | 仅供 A 控制器上报当前连接的账号额度；不向 Claude 子会话 relay 暴露。最多 4 个已知窗口，参数最多 8 KiB；校验百分比与时间戳，派生可用性和过期标记 |
 | `task_accept` | `task_id, assignment_id` | 接受 offered 分派；同一有效分派可重复接受 |
 | `task_get` | `task_id` | 返回任务与最近命令快照 |
@@ -107,6 +107,8 @@ channel 示例：
 | `command_cancel` | `task_id, command_id` | `reason`；显式请求停止，允许处理旧分派的遗留命令 |
 | `task_progress` | `task_id, assignment_id, message` | 保存进度文字 |
 | `task_complete` | `task_id, assignment_id, outcome, summary` | `result`；outcome 为 succeeded 或 failed |
+
+同一 workspace 允许多个活动 task。broker 按每个 A 的容量调度，任务通知和重发节流按 task 隔离；恢复会话优先占用空闲槽位。不同 task 的命令可以并发，同一 task 仍最多一条未结束命令。MCP 每条连接分别限制 64 个长等待调用（bash / command_wait）和 64 个其他工具调用，避免长等待挤占监控及取消请求。
 
 A 的执行、进度与完成请求都要求当前连接和有效 assignment。历史查询不延续旧执行授权。不能仅凭“当前任务”推断请求属于哪个任务。
 
