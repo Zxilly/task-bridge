@@ -16,6 +16,25 @@ func TestSameWorkspaceSchedulesConcurrentTasksWithinAgentCapacity(t *testing.T) 
 	second := f.submit("concurrent-second", "second task")
 	third := f.submit("concurrent-third", "third task")
 	f.b.tick(f.ctx)
+	// Submissions can share a millisecond; the scheduler breaks timestamp
+	// ties by UUID. Check capacity without assuming submission-call order.
+	var offered []model.Task
+	var queued []model.Task
+	for _, candidate := range []model.Task{first, second, third} {
+		task := f.task(candidate.ID)
+		switch task.State {
+		case "offered":
+			offered = append(offered, task)
+		case "queued":
+			queued = append(queued, task)
+		default:
+			t.Fatalf("unexpected task state: %+v", task)
+		}
+	}
+	if len(offered) != 2 || len(queued) != 1 {
+		t.Fatalf("capacity mismatch: offered=%d queued=%d", len(offered), len(queued))
+	}
+	first, second, third = offered[0], offered[1], queued[0]
 	for _, id := range []string{first.ID, second.ID} {
 		task := f.task(id)
 		if task.State != "offered" {
