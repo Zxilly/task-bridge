@@ -259,9 +259,13 @@ broker 和 B 都为每条连接维护已发送 ID 与发送时间。ACK 只移�
 
 ## 幂等、取消与未知结果
 
-命令终态中的 `exit_code`、`signal` 描述直接执行的 Bash 进程。进程退出与 stdout/stderr 关闭独立处理：退出后最多排空输出 2 秒；若后台子进程仍持有管道，保留已经收集的输出和已确认的退出码，并在 command、command.finished 与输出查询中返回 `output_incomplete: true`。这不产生 `execution_unknown` 或工作区隔离，也不表示后台工作成功。该标记与按字节上限产生的 `truncated` / `dropped_bytes` 分开；未收集的后续输出量无法计数。旧记录缺少该字段时视为 false。
+命令终态中的 `exit_code`、`signal` 描述直接执行的 Bash 进程，`shell_exit_code` 保存已观测到的 shell 退出码。主进程退出与 stdout/stderr 关闭独立处理：退出后排空输出 2 秒；若后台子进程仍持有管道，自动转为受管后台命令，保留 `state: running`，设置 `background: true`、`shell_exit_code` 并持续收集输出，直到流关闭、超时或取消。这不会仅因管道继承而产生 `execution_unknown` 或隔离。后台终态仍不能证明远端工作流的业务成功；完全脱离进程组且重定向全部输出的任务需要自己的 job ID / 结果文件。
 
-长命令优先以前台方式运行，通过小 `wait_ms` 和 `command_wait` 分段等待。自行后台启动的工作需要独立保存 job ID 并核验状态和结果；shell 的退出码不能代替后台工作流结果。超时和取消仍终止受管进程组 / Windows Job，正常退出后的输出排空只限制捕获时间；Windows Job 关闭时仍会清理其余成员。子进程自行脱离进程组等行为不提供完整树管理保证。
+显式后台提交使用 `bash` 的 `background: true`，立即返回 `pending` 和 `command.command_id`；默认执行期限为 15 分钟（普通命令为 120 秒），可通过 `timeout_ms` 设置，最大 900000 毫秒并受 task 原截止时间约束。自动转换保留原命令期限，不自动延长。`background_get(task_id, command_id, wait_ms?)` 查询状态和输出；省略或设置 `wait_ms: 0` 立即返回。`command_output` 按 cursor 翻页，`command_cancel` 显式停止受管进程组 / Windows Job，取消查询本身不会停止后台工作。
+
+每个 task 最多同时有 8 条活动命令。已有后台命令时可以继续执行其他命令；已有普通前台命令或 unknown 时仍拒绝新命令。`task_complete` 等待所有后台命令得到已知终态。显式后台标记参与幂等 hash；未指定时保留原 hash 编码。新的 `command.backgrounded` 事件在 B journal 落盘并通过持久 ACK 交付，服务端保存其元信息；客户端重启时未完成后台命令仍标为 unknown，不能凭旧 PID 宣称成功或自动重跑。
+
+强制停止后仍有脱离管理的进程持有输出管道时，最多再排空 2 秒并返回 `output_incomplete: true`。此标记与按字节上限产生的 `truncated` / `dropped_bytes` 分开；未收集的后续输出量无法计数。Windows Job 关闭时仍清理其余成员。旧记录没有这些可选字段时按零值处理。
 
 任务按 requester + idempotency key去重，命令按 task + operation key去重。请求 hash 包含对应业务内容：相同 key 与相同请求读取原记录，内容变化返回 `idempotency_conflict`。任务幂等范围不跨设备凭据迁移，命令记录不会因为 MCP 等待超时而删除。
 
