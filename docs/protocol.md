@@ -259,6 +259,10 @@ broker 和 B 都为每条连接维护已发送 ID 与发送时间。ACK 只移�
 
 ## 幂等、取消与未知结果
 
+命令终态中的 `exit_code`、`signal` 描述直接执行的 Bash 进程。进程退出与 stdout/stderr 关闭独立处理：退出后最多排空输出 2 秒；若后台子进程仍持有管道，保留已经收集的输出和已确认的退出码，并在 command、command.finished 与输出查询中返回 `output_incomplete: true`。这不产生 `execution_unknown` 或工作区隔离，也不表示后台工作成功。该标记与按字节上限产生的 `truncated` / `dropped_bytes` 分开；未收集的后续输出量无法计数。旧记录缺少该字段时视为 false。
+
+长命令优先以前台方式运行，通过小 `wait_ms` 和 `command_wait` 分段等待。自行后台启动的工作需要独立保存 job ID 并核验状态和结果；shell 的退出码不能代替后台工作流结果。超时和取消仍终止受管进程组 / Windows Job，正常退出后的输出排空只限制捕获时间；Windows Job 关闭时仍会清理其余成员。子进程自行脱离进程组等行为不提供完整树管理保证。
+
 任务按 requester + idempotency key去重，命令按 task + operation key去重。请求 hash 包含对应业务内容：相同 key 与相同请求读取原记录，内容变化返回 `idempotency_conflict`。任务幂等范围不跨设备凭据迁移，命令记录不会因为 MCP 等待超时而删除。
 
 B 在真正启动前调用 `command_authorize`，核验当前 assignment、租约、deadline、取消状态和 agent 连接。迟到或取消过的派发保存为 not_started，不自动换 key 再执行。
