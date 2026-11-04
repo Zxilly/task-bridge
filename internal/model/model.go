@@ -94,6 +94,8 @@ func (t Task) Terminal() bool {
 }
 
 type Command struct {
+	Background       bool   `json:"background,omitempty"`
+	ShellExitCode    *int   `json:"shell_exit_code,omitempty"`
 	Error            *Error `json:"error,omitempty"`
 	ID               string `json:"command_id"`
 	TaskID           string `json:"task_id"`
@@ -134,6 +136,8 @@ type Chunk struct {
 	Data      []byte `json:"data"`
 }
 type CommandEvent struct {
+	Background       bool   `json:"background,omitempty"`
+	ShellExitCode    *int   `json:"shell_exit_code,omitempty"`
 	Error            *Error `json:"error,omitempty"`
 	CommandID        string `json:"command_id"`
 	State            string `json:"state,omitempty"`

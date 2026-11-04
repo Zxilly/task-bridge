@@ -61,6 +61,8 @@ type CommandResult struct {
 }
 
 type ExecutorReconcileRecord struct {
+	Background       bool   `json:"background,omitempty"`
+	ShellExitCode    *int   `json:"shell_exit_code,omitempty"`
 	OutputIncomplete bool   `json:"output_incomplete,omitempty"`
 	Error            *Error `json:"error,omitempty"`
 	CommandID        string `json:"command_id"`

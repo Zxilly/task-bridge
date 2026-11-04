@@ -22,12 +22,14 @@ type Config struct {
 	Env            []string
 	MaxOutputBytes int64
 	KillGrace      time.Duration
+	Backgrounded   func(shellExitCode int) error
 }
 
 type Request struct {
-	Command string
-	Cwd     string
-	Timeout time.Duration
+	Command    string
+	Cwd        string
+	Timeout    time.Duration
+	Background bool
 }
 
 type Chunk struct {
@@ -46,6 +48,8 @@ type Result struct {
 	Truncated        bool   `json:"truncated"`
 	DroppedBytes     int64  `json:"dropped_bytes"`
 	OutputIncomplete bool   `json:"output_incomplete,omitempty"`
+	Background       bool   `json:"background,omitempty"`
+	ShellExitCode    *int   `json:"shell_exit_code,omitempty"`
 }
 
 // ResolveCwd checks real paths, including symlinks. This is routing protection,
@@ -179,6 +183,26 @@ func Run(ctx context.Context, cfg Config, req Request, started func(int) error, 
 		// A shell can exit on SIGTERM while an ordinary descendant ignores it.
 		// Finish cancelling the entire process group/job in that case too.
 		process.Terminate(cmd, true)
+	}
+	result.Background = req.Background
+	if !interrupted && cmd.ProcessState != nil {
+		shellCode := cmd.ProcessState.ExitCode()
+		result.ShellExitCode = &shellCode
+		if !capture.wait(2 * time.Second) {
+			result.Background = true
+			if cfg.Backgrounded != nil {
+				if notifyErr := cfg.Backgrounded(shellCode); notifyErr != nil {
+					output.setError(notifyErr)
+					cancel()
+				}
+			}
+			select {
+			case <-capture.done:
+			case <-commandCtx.Done():
+				interrupted = true
+				process.Terminate(cmd, true)
+			}
+		}
 	}
 	result.OutputIncomplete = capture.drain(2 * time.Second)
 	result.DurationMS = time.Since(begin).Milliseconds()

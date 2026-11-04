@@ -523,6 +523,7 @@ func (b *Broker) ConnectionCounts() (int, int) {
 }
 
 type Args struct {
+	Background           bool            `json:"background,omitempty"`
 	TaskID               string          `json:"task_id,omitempty"`
 	AssignmentID         string          `json:"assignment_id,omitempty"`
 	PreviousAssignmentID string          `json:"previous_assignment_id,omitempty"`
@@ -662,6 +663,9 @@ func (b *Broker) CallAgent(ctx context.Context, p model.Principal, cid, method s
 	}
 	var out model.AgentResult
 	var dispatched model.Command
+	if method == "background_get" {
+		return b.waitCommand(ctx, p, a)
+	}
 	if method == "command_wait" {
 		if a.WaitMS == 0 {
 			a.WaitMS = 30000
@@ -754,8 +758,11 @@ func (b *Broker) CallAgent(ctx context.Context, p model.Principal, cid, method s
 			}
 			if a.TimeoutMS == 0 {
 				a.TimeoutMS = 120000
+				if a.Background {
+					a.TimeoutMS = 900000
+				}
 			}
-			h := storage.Hash(string(model.JSON(commandRequestKey{Command: a.Command, Cwd: a.Cwd, TimeoutMS: a.TimeoutMS})))
+			h := storage.Hash(string(model.JSON(commandRequestKey{Command: a.Command, Cwd: a.Cwd, TimeoutMS: a.TimeoutMS, Background: a.Background})))
 			c, err := tx.CommandByKey(t.ID, a.OperationKey)
 			if err == nil {
 				if c.RequestHash != h {
@@ -777,17 +784,24 @@ func (b *Broker) CallAgent(ctx context.Context, p model.Principal, cid, method s
 			if e != nil {
 				return e
 			}
+			active := 0
 			for _, c := range cs {
-				if !c.Terminal() || c.State == "unknown" {
-					return model.Err("command_busy", "resolve current command before starting another")
+				if c.State == "unknown" || (!c.Terminal() && !c.Background) {
+					return model.Err("command_busy", "resolve current foreground command before starting another")
 				}
+				if !c.Terminal() {
+					active++
+				}
+			}
+			if active >= 8 {
+				return model.Err("command_busy", "at most 8 active commands per task")
 			}
 			now := model.Now()
 			timeout := min(a.TimeoutMS, t.DeadlineAt-now)
 			if timeout <= 0 {
 				return model.Err("deadline_exceeded", "task deadline passed")
 			}
-			c = model.Command{ID: uuid.NewString(), TaskID: t.ID, AssignmentID: t.AssignmentID, OperationKey: a.OperationKey, RequestHash: h, Command: a.Command, Cwd: a.Cwd, RequestedCwd: a.Cwd, TimeoutMS: timeout, State: "dispatched", CreatedAt: now, ValidUntil: min(t.LeaseUntil, t.DeadlineAt)}
+			c = model.Command{ID: uuid.NewString(), TaskID: t.ID, AssignmentID: t.AssignmentID, OperationKey: a.OperationKey, RequestHash: h, Command: a.Command, Cwd: a.Cwd, RequestedCwd: a.Cwd, TimeoutMS: timeout, Background: a.Background, State: "dispatched", CreatedAt: now, ValidUntil: min(t.LeaseUntil, t.DeadlineAt)}
 			if e = tx.SaveCommand(c); e != nil {
 				return e
 			}
@@ -880,6 +894,10 @@ func (b *Broker) CallAgent(ctx context.Context, p model.Principal, cid, method s
 	}
 	if method == "bash" {
 		a.CommandID = dispatched.ID
+		if a.Background {
+			a.WaitMS = 0
+			return b.waitCommand(ctx, p, a)
+		}
 		if a.WaitMS == 0 {
 			a.WaitMS = 30000
 		}

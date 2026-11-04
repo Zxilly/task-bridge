@@ -21,19 +21,22 @@ func TestInheritedPipesPreserveKnownShellExit(t *testing.T) {
 	}{{"success", "true && sleep 3 > background.log 2>&1 & printf ready; exit 0", 0}, {"failure", "sleep 3 & printf ready; printf detail >&2; exit 7", 7}} {
 		t.Run(tc.name, func(t *testing.T) {
 			output := map[string]string{}
-			begin := time.Now()
-			result := Run(context.Background(), Config{Root: t.TempDir(), BashPath: testBash(t)}, Request{Command: tc.command, Timeout: 5 * time.Second}, nil, func(c Chunk) error { output[c.Stream] += string(c.Data); return nil })
+			promoted := false
+			result := Run(context.Background(), Config{Root: t.TempDir(), BashPath: testBash(t), Backgrounded: func(code int) error {
+				promoted = true
+				if code != tc.exit {
+					t.Errorf("shell code=%d", code)
+				}
+				return nil
+			}}, Request{Command: tc.command, Timeout: 5 * time.Second}, nil, func(c Chunk) error { output[c.Stream] += string(c.Data); return nil })
 			if result.State != "exited" || result.ExitCode != tc.exit || result.Error != "" {
 				t.Fatalf("known exit lost: %+v", result)
 			}
-			if !result.OutputIncomplete {
-				t.Fatalf("missing output warning: %+v", result)
+			if !promoted || !result.Background || result.OutputIncomplete || result.ShellExitCode == nil || *result.ShellExitCode != tc.exit {
+				t.Fatalf("missing background tracking: %+v", result)
 			}
 			if !strings.Contains(output["stdout"], "ready") {
 				t.Fatalf("early output lost: %v", output)
-			}
-			if time.Since(begin) > 2800*time.Millisecond {
-				t.Fatal("waited for inherited pipe EOF")
 			}
 		})
 	}
@@ -59,5 +62,22 @@ func TestDrainRetainsOutputAfterShellExit(t *testing.T) {
 	result := Run(context.Background(), Config{Root: t.TempDir(), BashPath: testBash(t)}, Request{Command: "(sleep 0.1; printf late) & printf early"}, nil, func(c Chunk) error { output += string(c.Data); return nil })
 	if result.State != "exited" || result.ExitCode != 0 || result.OutputIncomplete || output != "earlylate" {
 		t.Fatalf("output=%q result=%+v", output, result)
+	}
+}
+
+func TestAutomaticBackgroundStillHonorsCancellation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix background shell semantics")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	root := t.TempDir()
+	r := Run(ctx, Config{Root: root, BashPath: testBash(t), Backgrounded: func(int) error { cancel(); return nil }}, Request{Command: "(sleep 3; printf survived > survivor) & exit 0", Timeout: 5 * time.Second}, nil, nil)
+	if r.State != "cancelled" || !r.Background || r.ShellExitCode == nil || *r.ShellExitCode != 0 {
+		t.Fatalf("cancellation lost: %+v", r)
+	}
+	time.Sleep(1100 * time.Millisecond)
+	if _, err := os.Stat(filepath.Join(root, "survivor")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("background descendant survived: %v", err)
 	}
 }

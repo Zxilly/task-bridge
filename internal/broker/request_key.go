@@ -9,13 +9,18 @@ import (
 // Request keys retain the original positional JSON arrays because their hashes
 // are persisted for idempotency checks across broker upgrades.
 type commandRequestKey struct {
-	Command   string
-	Cwd       string
-	TimeoutMS int64
+	Command    string
+	Cwd        string
+	TimeoutMS  int64
+	Background bool
 }
 
 func (k commandRequestKey) MarshalJSON() ([]byte, error) {
-	return json.Marshal([3]json.RawMessage{model.JSON(k.Command), model.JSON(k.Cwd), model.JSON(k.TimeoutMS)})
+	parts := []json.RawMessage{model.JSON(k.Command), model.JSON(k.Cwd), model.JSON(k.TimeoutMS)}
+	if k.Background {
+		parts = append(parts, model.JSON(true))
+	}
+	return json.Marshal(parts)
 }
 
 type taskRequestKey struct {

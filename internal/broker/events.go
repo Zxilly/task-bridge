@@ -71,6 +71,14 @@ func (b *Broker) ClientEvent(ctx context.Context, c *ClientPeer, m model.Envelop
 				cmd.StartedAt = ev.StartedAt
 				cmd.Cwd = ev.Cwd
 			}
+		case "command.backgrounded":
+			if ev.ShellExitCode == nil {
+				return model.Err("invalid_message", "background promotion requires shell exit code")
+			}
+			if !cmd.Terminal() {
+				cmd.Background = true
+				cmd.ShellExitCode = ev.ShellExitCode
+			}
 		case "command.output":
 			if ev.Chunk == nil || ev.Chunk.CommandID != cmd.ID || ev.Chunk.Seq <= 0 || (ev.Chunk.Stream != "stdout" && ev.Chunk.Stream != "stderr") || len(ev.Chunk.Data) > 32768 {
 				return model.Err("invalid_message", "invalid bounded output chunk")
@@ -139,6 +147,10 @@ func (b *Broker) ClientEvent(ctx context.Context, c *ClientPeer, m model.Envelop
 			cmd.DurationMS = ev.DurationMS
 			cmd.Truncated = cmd.Truncated || ev.Truncated
 			cmd.OutputIncomplete = ev.OutputIncomplete
+			cmd.Background = cmd.Background || ev.Background
+			if ev.ShellExitCode != nil {
+				cmd.ShellExitCode = ev.ShellExitCode
+			}
 			cmd.DroppedBytes += ev.DroppedBytes
 			if ev.Cwd != "" {
 				cmd.Cwd = ev.Cwd

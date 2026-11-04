@@ -538,7 +538,11 @@ func (c *Client) execute(root context.Context, dispatch model.Dispatch) {
 		env = append(env, key+"="+value)
 	}
 	started := false
-	result := executor.Run(ctx, executor.Config{Root: ws.Root, BashPath: ws.BashPath, Env: env, MaxOutputBytes: c.cfg.MaxOutputBytes}, executor.Request{Command: dispatch.Command.Command, Cwd: dispatch.Command.Cwd, Timeout: time.Duration(dispatch.Command.TimeoutMS) * time.Millisecond}, func(pid int) error {
+	result := executor.Run(ctx, executor.Config{Root: ws.Root, BashPath: ws.BashPath, Env: env, MaxOutputBytes: c.cfg.MaxOutputBytes, Backgrounded: func(code int) error {
+		err := c.journal.Record("command.backgrounded", model.CommandEvent{CommandID: id, State: "running", Background: true, ShellExitCode: &code}, 0)
+		c.signal()
+		return err
+	}}, executor.Request{Command: dispatch.Command.Command, Cwd: dispatch.Command.Cwd, Timeout: time.Duration(dispatch.Command.TimeoutMS) * time.Millisecond, Background: dispatch.Command.Background}, func(pid int) error {
 		started = true
 		err := c.journal.Record("command.started", model.CommandEvent{CommandID: id, State: "running", StartedAt: model.Now()}, pid)
 		c.signal()
@@ -556,7 +560,7 @@ func (c *Client) execute(root context.Context, dispatch model.Dispatch) {
 			state = "not_started"
 		}
 	}
-	event := model.CommandEvent{CommandID: id, State: state, Signal: result.Signal, Cwd: result.Cwd, FinishedAt: model.Now(), DurationMS: result.DurationMS, Truncated: result.Truncated, DroppedBytes: result.DroppedBytes, OutputIncomplete: result.OutputIncomplete}
+	event := model.CommandEvent{CommandID: id, State: state, Signal: result.Signal, Cwd: result.Cwd, FinishedAt: model.Now(), DurationMS: result.DurationMS, Truncated: result.Truncated, DroppedBytes: result.DroppedBytes, OutputIncomplete: result.OutputIncomplete, Background: result.Background, ShellExitCode: result.ShellExitCode}
 	if result.Error != "" {
 		code := "execution_unknown"
 		if !started {

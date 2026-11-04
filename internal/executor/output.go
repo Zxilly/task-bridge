@@ -65,21 +65,29 @@ func (c *commandOutput) close() {
 // A known shell exit stays known even if descendants keep a stream open.
 // Preserve all output collected so far and tell callers the capture ended early.
 func (c *commandOutput) drain(timeout time.Duration) bool {
+	if c.wait(timeout) {
+		return false
+	}
+	for _, f := range c.readers {
+		_ = f.Close()
+	}
+	<-c.done
+	return true
+}
+
+// wait leaves live readers attached when it expires, allowing background polling.
+func (c *commandOutput) wait(timeout time.Duration) bool {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	select {
 	case <-c.done:
-		return false
+		return true
 	case <-timer.C:
 		select {
 		case <-c.done:
-			return false
+			return true
 		default:
 		}
-		for _, f := range c.readers {
-			_ = f.Close()
-		}
-		<-c.done
-		return true
+		return false
 	}
 }

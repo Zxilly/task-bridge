@@ -52,7 +52,8 @@ func toolDefinitions() []toolDefinition {
 		{"task_resume", "Claim an explicit B recovery request with task_id and resume_request_id. A manual MCP caller may instead provide previous_assignment_id when no recovery request is pending. The broker requires one of these IDs and checks reconciliation before issuing a new assignment.", []string{"task_id"}, map[string]*jsonschema.Schema{"task_id": id(), "previous_assignment_id": id(), "resume_request_id": id()}, false},
 		{"task_resume_failed", "Controller-only: record why an explicit recovery request could not start or continue. This does not complete the task. error_code is at most 64 UTF-8 bytes and message at most 1024 UTF-8 bytes.", []string{"task_id", "resume_request_id", "error_code", "message"}, map[string]*jsonschema.Schema{"task_id": id(), "resume_request_id": id(), "error_code": textSchema(64), "message": textSchema(1024)}, false},
 		{"task_interrupt", "Controller-only: fence the current assignment after its Claude process has stopped, preserving the controller connection. Record a bounded public diagnostic; never send raw CLI output. Requires explicit B-side resume afterwards.", []string{"task_id", "assignment_id", "error_code", "message"}, map[string]*jsonschema.Schema{"task_id": id(), "assignment_id": id(), "error_code": textSchema(64), "message": textSchema(1024)}, false},
-		{"bash", "Execute Bash on the assigned B workspace. Reuse operation_key only for retries of the identical command. wait_ms bounds this call, not command execution. Prefer foreground commands and command_wait for long work. exit_code describes the shell only; output_incomplete means inherited pipes remained open after shell exit and capture stopped after 2 seconds. Detached jobs need their own status verification.", []string{"task_id", "assignment_id", "operation_key", "command"}, map[string]*jsonschema.Schema{"task_id": id(), "assignment_id": id(), "operation_key": textSchema(200), "command": textSchema(32768), "cwd": textSchema(4096), "timeout_ms": integerSchema(1, 900000), "wait_ms": integerSchema(0, 120000)}, false},
+		{"bash", "Execute Bash on the assigned B workspace. Reuse operation_key only for retries of the identical command. wait_ms bounds this call, not command execution. Prefer foreground commands and command_wait for long work. exit_code describes the shell only; background=true returns immediately with a command ID (default timeout 15 minutes). A shell that exits while descendants retain output pipes automatically becomes background after 2 seconds; use background_get. shell_exit_code is the shell status, not detached job success. timeout_ms and task deadlines still apply; command_cancel stops managed descendants. output_incomplete marks forced capture closure. Fully detached jobs need their own status verification.", []string{"task_id", "assignment_id", "operation_key", "command"}, map[string]*jsonschema.Schema{"task_id": id(), "assignment_id": id(), "operation_key": textSchema(200), "command": textSchema(32768), "cwd": textSchema(4096), "timeout_ms": integerSchema(1, 900000), "background": {Type: "boolean"}, "wait_ms": integerSchema(0, 120000)}, false},
+		{"background_get", "Query a background command by task_id and command_id, including shell_exit_code, current state and captured output. Optional wait_ms waits for a bounded interval; zero returns immediately. Use command_output to page more output, and command_cancel to stop the job.", []string{"task_id", "command_id"}, wait, true},
 		{"command_get", "Get command status and execution metadata.", []string{"task_id", "command_id"}, get, true},
 		{"command_wait", "Wait for a command with a bounded wait. Cancelling this MCP call does not cancel the command.", []string{"task_id", "command_id"}, wait, true},
 		{"command_output", "Read a bounded output page. Continue with the returned cursor.", []string{"task_id", "command_id"}, output, true},
@@ -88,7 +89,7 @@ func registerTools(server *mcp.Server, service model.AgentService, principal mod
 			admission := slots
 			// Long command waits must not consume every slot needed by task
 			// monitors, cancellation and recovery on this shared connection.
-			if def.name == "bash" || def.name == "command_wait" {
+			if def.name == "bash" || (def.name == "command_wait" || def.name == "background_get") {
 				admission = waitSlots
 			}
 			select {
@@ -114,7 +115,7 @@ func registerTools(server *mcp.Server, service model.AgentService, principal mod
 
 func beginWaitProgress(ctx context.Context, req *mcp.CallToolRequest, method string) func() {
 	noop := func() {}
-	if method != "bash" && method != "command_wait" {
+	if method != "bash" && method != "command_wait" && method != "background_get" {
 		return noop
 	}
 	token := req.Params.GetProgressToken()

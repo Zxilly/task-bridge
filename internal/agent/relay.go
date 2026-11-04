@@ -138,7 +138,7 @@ func newRelay(ctx context.Context, upstream *mcp.ClientSession, offer model.Chan
 
 func relayAllowsTool(name string) bool {
 	switch name {
-	case "task_accept", "task_get", "bash", "command_get", "command_wait", "command_output", "command_cancel", "task_progress", "task_complete":
+	case "task_accept", "task_get", "bash", "command_get", "command_wait", "background_get", "command_output", "command_cancel", "task_progress", "task_complete":
 		return true
 	default:
 		return false
