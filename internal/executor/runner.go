@@ -37,14 +37,15 @@ type Chunk struct {
 }
 
 type Result struct {
-	State        string `json:"state"`
-	ExitCode     int    `json:"exit_code"`
-	Signal       string `json:"signal,omitempty"`
-	Error        string `json:"error,omitempty"`
-	Cwd          string `json:"cwd"`
-	DurationMS   int64  `json:"duration_ms"`
-	Truncated    bool   `json:"truncated"`
-	DroppedBytes int64  `json:"dropped_bytes"`
+	State            string `json:"state"`
+	ExitCode         int    `json:"exit_code"`
+	Signal           string `json:"signal,omitempty"`
+	Error            string `json:"error,omitempty"`
+	Cwd              string `json:"cwd"`
+	DurationMS       int64  `json:"duration_ms"`
+	Truncated        bool   `json:"truncated"`
+	DroppedBytes     int64  `json:"dropped_bytes"`
+	OutputIncomplete bool   `json:"output_incomplete,omitempty"`
 }
 
 // ResolveCwd checks real paths, including symlinks. This is routing protection,
@@ -130,14 +131,19 @@ func Run(ctx context.Context, cfg Config, req Request, started func(int) error, 
 	}
 	defer process.Close()
 	output := &collector{max: cfg.MaxOutputBytes, emit: emit, cancel: cancel}
-	cmd.Stdout = streamWriter{output, "stdout"}
-	cmd.Stderr = streamWriter{output, "stderr"}
-	// Bound pipe inheritance by unsupported detached descendants after exit.
-	cmd.WaitDelay = 3 * time.Second
+	// Own the pipes so cmd.Wait reports the shell's exit independently of EOF
+	// from descendants which inherited stdout/stderr (as in Codex exec).
+	capture, err := newCommandOutput(cmd, output)
+	if err != nil {
+		result.Error = err.Error()
+		return result
+	}
+	defer capture.close()
 	if err = process.Start(cmd); err != nil {
 		result.Error = err.Error()
 		return result
 	}
+	capture.closeWriters()
 	if started != nil {
 		if err = started(cmd.Process.Pid); err != nil {
 			output.setError(err)
@@ -154,9 +160,11 @@ func Run(ctx context.Context, cfg Config, req Request, started func(int) error, 
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
+	var interrupted bool
 	select {
 	case err = <-done:
 	case <-commandCtx.Done():
+		interrupted = true
 		process.Terminate(cmd, false)
 		timer := time.NewTimer(cfg.KillGrace)
 		select {
@@ -168,7 +176,11 @@ func Run(ctx context.Context, cfg Config, req Request, started func(int) error, 
 			process.Terminate(cmd, true)
 			err = <-done
 		}
+		// A shell can exit on SIGTERM while an ordinary descendant ignores it.
+		// Finish cancelling the entire process group/job in that case too.
+		process.Terminate(cmd, true)
 	}
+	result.OutputIncomplete = capture.drain(2 * time.Second)
 	result.DurationMS = time.Since(begin).Milliseconds()
 	if cmd.ProcessState != nil {
 		result.ExitCode = cmd.ProcessState.ExitCode()
@@ -180,13 +192,10 @@ func Run(ctx context.Context, cfg Config, req Request, started func(int) error, 
 	case output.err != nil:
 		result.State = "failed"
 		result.Error = "output journal: " + output.err.Error()
-	case errors.Is(commandCtx.Err(), context.DeadlineExceeded):
+	case interrupted && errors.Is(commandCtx.Err(), context.DeadlineExceeded):
 		result.State = "timed_out"
-	case ctx.Err() != nil:
+	case interrupted && ctx.Err() != nil:
 		result.State = "cancelled"
-	case errors.Is(err, exec.ErrWaitDelay):
-		result.State = "unknown"
-		result.Error = "inherited output pipes did not close; background commands are unsupported"
 	default:
 		result.State = "exited"
 		if err != nil {

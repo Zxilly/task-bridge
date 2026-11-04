@@ -88,7 +88,7 @@ func (b *Broker) reconcileExecutor(ctx context.Context, peer *ClientPeer, raw js
 			}
 			if c.Terminal() && c.State != "unknown" {
 				if r.State == "unknown" {
-					serverResults[c.ID] = model.CommandEvent{CommandID: c.ID, State: c.State, ExitCode: c.ExitCode, Signal: c.Signal, Cwd: c.Cwd, StartedAt: c.StartedAt, FinishedAt: c.FinishedAt, DurationMS: c.DurationMS, Truncated: c.Truncated, DroppedBytes: c.DroppedBytes, Error: c.Error}
+					serverResults[c.ID] = model.CommandEvent{CommandID: c.ID, State: c.State, ExitCode: c.ExitCode, Signal: c.Signal, Cwd: c.Cwd, StartedAt: c.StartedAt, FinishedAt: c.FinishedAt, DurationMS: c.DurationMS, Truncated: c.Truncated, DroppedBytes: c.DroppedBytes, OutputIncomplete: c.OutputIncomplete, Error: c.Error}
 				} else {
 					sameExit := (c.ExitCode == nil && r.ExitCode == nil) || (c.ExitCode != nil && r.ExitCode != nil && *c.ExitCode == *r.ExitCode)
 					if c.State != r.State || !sameExit || c.Signal != r.Signal || c.FinishedAt != r.FinishedAt || c.DurationMS != r.DurationMS {
@@ -106,6 +106,7 @@ func (b *Broker) reconcileExecutor(ctx context.Context, peer *ClientPeer, raw js
 				}
 				c.FinishedAt = r.FinishedAt
 				c.DurationMS = r.DurationMS
+				c.OutputIncomplete = r.OutputIncomplete
 				if e = tx.SaveCommand(c); e != nil {
 					return e
 				}

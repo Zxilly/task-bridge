@@ -556,7 +556,7 @@ func (c *Client) execute(root context.Context, dispatch model.Dispatch) {
 			state = "not_started"
 		}
 	}
-	event := model.CommandEvent{CommandID: id, State: state, Signal: result.Signal, Cwd: result.Cwd, FinishedAt: model.Now(), DurationMS: result.DurationMS, Truncated: result.Truncated, DroppedBytes: result.DroppedBytes}
+	event := model.CommandEvent{CommandID: id, State: state, Signal: result.Signal, Cwd: result.Cwd, FinishedAt: model.Now(), DurationMS: result.DurationMS, Truncated: result.Truncated, DroppedBytes: result.DroppedBytes, OutputIncomplete: result.OutputIncomplete}
 	if result.Error != "" {
 		code := "execution_unknown"
 		if !started {

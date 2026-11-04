@@ -1265,7 +1265,7 @@ func output(tx *storage.Tx, c model.Command, cursor int64, limit int) (model.Out
 	}
 	stdoutText, stdoutOmitted := displayOutput(stdout)
 	stderrText, stderrOmitted := displayOutput(stderr)
-	return model.OutputResult{CommandID: c.ID, Stdout: stdoutText, Stderr: stderrText, Chunks: raw, TextOmitted: stdoutOmitted || stderrOmitted, Cursor: next, HasMore: next < c.OutputBytes, Truncated: c.Truncated, DroppedBytes: c.DroppedBytes}, nil
+	return model.OutputResult{CommandID: c.ID, Stdout: stdoutText, Stderr: stderrText, Chunks: raw, TextOmitted: stdoutOmitted || stderrOmitted, Cursor: next, HasMore: next < c.OutputBytes, Truncated: c.Truncated, DroppedBytes: c.DroppedBytes, OutputIncomplete: c.OutputIncomplete}, nil
 }
 
 func displayOutput(data []byte) (string, bool) {

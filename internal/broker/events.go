@@ -138,6 +138,7 @@ func (b *Broker) ClientEvent(ctx context.Context, c *ClientPeer, m model.Envelop
 			cmd.FinishedAt = ev.FinishedAt
 			cmd.DurationMS = ev.DurationMS
 			cmd.Truncated = cmd.Truncated || ev.Truncated
+			cmd.OutputIncomplete = ev.OutputIncomplete
 			cmd.DroppedBytes += ev.DroppedBytes
 			if ev.Cwd != "" {
 				cmd.Cwd = ev.Cwd

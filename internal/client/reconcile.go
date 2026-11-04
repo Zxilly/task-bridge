@@ -299,7 +299,7 @@ func (j *Journal) reconcileRecords(after string, limit int) ([]reconcileRecord, 
 		if requestedCwd == "" {
 			requestedCwd = dispatch.Command.Cwd
 		}
-		records = append(records, reconcileRecord{CommandID: id, TaskID: dispatch.Command.TaskID, WorkspaceID: dispatch.WorkspaceID, State: state, Command: dispatch.Command.Command, OperationKey: dispatch.Command.OperationKey, Cwd: requestedCwd, TimeoutMS: dispatch.Command.TimeoutMS, ExitCode: event.ExitCode, Signal: event.Signal, FinishedAt: event.FinishedAt, DurationMS: event.DurationMS, Error: event.Error})
+		records = append(records, reconcileRecord{CommandID: id, TaskID: dispatch.Command.TaskID, WorkspaceID: dispatch.WorkspaceID, State: state, Command: dispatch.Command.Command, OperationKey: dispatch.Command.OperationKey, Cwd: requestedCwd, TimeoutMS: dispatch.Command.TimeoutMS, ExitCode: event.ExitCode, Signal: event.Signal, FinishedAt: event.FinishedAt, DurationMS: event.DurationMS, OutputIncomplete: event.OutputIncomplete, Error: event.Error})
 	}
 	return records, rows.Err()
 }

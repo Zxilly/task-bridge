@@ -94,28 +94,29 @@ func (t Task) Terminal() bool {
 }
 
 type Command struct {
-	Error        *Error `json:"error,omitempty"`
-	ID           string `json:"command_id"`
-	TaskID       string `json:"task_id"`
-	AssignmentID string `json:"assignment_id"`
-	OperationKey string `json:"operation_key"`
-	RequestHash  string `json:"-"`
-	Command      string `json:"command"`
-	Cwd          string `json:"cwd,omitempty"`
-	RequestedCwd string `json:"requested_cwd,omitempty"`
-	TimeoutMS    int64  `json:"timeout_ms"`
-	State        string `json:"state"`
-	ExitCode     *int   `json:"exit_code"`
-	Signal       string `json:"signal,omitempty"`
-	StartedAt    int64  `json:"started_at,omitempty"`
-	FinishedAt   int64  `json:"finished_at,omitempty"`
-	CreatedAt    int64  `json:"created_at"`
-	DurationMS   int64  `json:"duration_ms"`
-	ValidUntil   int64  `json:"valid_until"`
-	OutputBytes  int64  `json:"output_bytes"`
-	Truncated    bool   `json:"truncated"`
-	DroppedBytes int64  `json:"dropped_bytes"`
-	CancelReason string `json:"cancel_reason,omitempty"`
+	Error            *Error `json:"error,omitempty"`
+	ID               string `json:"command_id"`
+	TaskID           string `json:"task_id"`
+	AssignmentID     string `json:"assignment_id"`
+	OperationKey     string `json:"operation_key"`
+	RequestHash      string `json:"-"`
+	Command          string `json:"command"`
+	Cwd              string `json:"cwd,omitempty"`
+	RequestedCwd     string `json:"requested_cwd,omitempty"`
+	TimeoutMS        int64  `json:"timeout_ms"`
+	State            string `json:"state"`
+	ExitCode         *int   `json:"exit_code"`
+	Signal           string `json:"signal,omitempty"`
+	StartedAt        int64  `json:"started_at,omitempty"`
+	FinishedAt       int64  `json:"finished_at,omitempty"`
+	CreatedAt        int64  `json:"created_at"`
+	DurationMS       int64  `json:"duration_ms"`
+	ValidUntil       int64  `json:"valid_until"`
+	OutputBytes      int64  `json:"output_bytes"`
+	Truncated        bool   `json:"truncated"`
+	DroppedBytes     int64  `json:"dropped_bytes"`
+	OutputIncomplete bool   `json:"output_incomplete,omitempty"`
+	CancelReason     string `json:"cancel_reason,omitempty"`
 }
 
 func (c Command) Terminal() bool {
@@ -133,18 +134,19 @@ type Chunk struct {
 	Data      []byte `json:"data"`
 }
 type CommandEvent struct {
-	Error        *Error `json:"error,omitempty"`
-	CommandID    string `json:"command_id"`
-	State        string `json:"state,omitempty"`
-	ExitCode     *int   `json:"exit_code,omitempty"`
-	Signal       string `json:"signal,omitempty"`
-	Cwd          string `json:"cwd,omitempty"`
-	StartedAt    int64  `json:"started_at,omitempty"`
-	FinishedAt   int64  `json:"finished_at,omitempty"`
-	DurationMS   int64  `json:"duration_ms,omitempty"`
-	Truncated    bool   `json:"truncated,omitempty"`
-	DroppedBytes int64  `json:"dropped_bytes,omitempty"`
-	Chunk        *Chunk `json:"chunk,omitempty"`
+	Error            *Error `json:"error,omitempty"`
+	CommandID        string `json:"command_id"`
+	State            string `json:"state,omitempty"`
+	ExitCode         *int   `json:"exit_code,omitempty"`
+	Signal           string `json:"signal,omitempty"`
+	Cwd              string `json:"cwd,omitempty"`
+	StartedAt        int64  `json:"started_at,omitempty"`
+	FinishedAt       int64  `json:"finished_at,omitempty"`
+	DurationMS       int64  `json:"duration_ms,omitempty"`
+	Truncated        bool   `json:"truncated,omitempty"`
+	DroppedBytes     int64  `json:"dropped_bytes,omitempty"`
+	OutputIncomplete bool   `json:"output_incomplete,omitempty"`
+	Chunk            *Chunk `json:"chunk,omitempty"`
 }
 type Dispatch struct {
 	WorkspaceID string  `json:"workspace_id"`

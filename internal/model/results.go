@@ -41,15 +41,16 @@ type OutputChunk struct {
 }
 
 type OutputResult struct {
-	CommandID    string        `json:"command_id"`
-	Stdout       string        `json:"stdout"`
-	Stderr       string        `json:"stderr"`
-	Chunks       []OutputChunk `json:"chunks"`
-	TextOmitted  bool          `json:"text_omitted"`
-	Cursor       int64         `json:"cursor"`
-	HasMore      bool          `json:"has_more"`
-	Truncated    bool          `json:"truncated"`
-	DroppedBytes int64         `json:"dropped_bytes"`
+	CommandID        string        `json:"command_id"`
+	Stdout           string        `json:"stdout"`
+	Stderr           string        `json:"stderr"`
+	Chunks           []OutputChunk `json:"chunks"`
+	TextOmitted      bool          `json:"text_omitted"`
+	Cursor           int64         `json:"cursor"`
+	HasMore          bool          `json:"has_more"`
+	Truncated        bool          `json:"truncated"`
+	DroppedBytes     int64         `json:"dropped_bytes"`
+	OutputIncomplete bool          `json:"output_incomplete,omitempty"`
 }
 
 // CommandResult extends the output page at the same JSON object level.
@@ -60,20 +61,21 @@ type CommandResult struct {
 }
 
 type ExecutorReconcileRecord struct {
-	Error        *Error `json:"error,omitempty"`
-	CommandID    string `json:"command_id"`
-	TaskID       string `json:"task_id"`
-	WorkspaceID  string `json:"workspace_id"`
-	State        string `json:"state"`
-	Command      string `json:"command"`
-	OperationKey string `json:"operation_key"`
-	Cwd          string `json:"cwd,omitempty"`
-	TimeoutMS    int64  `json:"timeout_ms"`
-	ExitCode     *int   `json:"exit_code,omitempty"`
-	Signal       string `json:"signal,omitempty"`
-	StartedAt    int64  `json:"started_at,omitempty"`
-	FinishedAt   int64  `json:"finished_at,omitempty"`
-	DurationMS   int64  `json:"duration_ms,omitempty"`
+	OutputIncomplete bool   `json:"output_incomplete,omitempty"`
+	Error            *Error `json:"error,omitempty"`
+	CommandID        string `json:"command_id"`
+	TaskID           string `json:"task_id"`
+	WorkspaceID      string `json:"workspace_id"`
+	State            string `json:"state"`
+	Command          string `json:"command"`
+	OperationKey     string `json:"operation_key"`
+	Cwd              string `json:"cwd,omitempty"`
+	TimeoutMS        int64  `json:"timeout_ms"`
+	ExitCode         *int   `json:"exit_code,omitempty"`
+	Signal           string `json:"signal,omitempty"`
+	StartedAt        int64  `json:"started_at,omitempty"`
+	FinishedAt       int64  `json:"finished_at,omitempty"`
+	DurationMS       int64  `json:"duration_ms,omitempty"`
 }
 
 type ExecutorReconcileArgs struct {
